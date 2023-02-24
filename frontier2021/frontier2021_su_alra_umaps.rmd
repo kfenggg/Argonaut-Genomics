@@ -1,0 +1,195 @@
+---
+title: "Su data ALRA UMAPS"
+author: "Kevin Feng"
+date: "2022-07-28"
+output:
+  html_document:
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load preprocessed ALRA imputed data and genesets, then score them
+```{r load data, message=FALSE}
+library(Seurat)
+library(SeuratData)
+library(SeuratWrappers)
+library(dplyr)
+
+alra.sobj <- readRDS('frontier2021_preprocessed_alra.rds')
+
+# read in gene lists
+prcc_genes        = c('CDKN2A')
+chrcc_genes       = c('RHCG')
+macrophage_genes  = c('CD68', 'CD163')
+monocyte_genes    = c('CD14', 'LYZ', 'S100A12', 'S100A9', 'S100A8')
+dendritic_genes   = c('FCER1A', 'CD1E', 'CD1C', 'HLA-DMA', 'HLA-DMB')
+nk_genes          = c('KLRD1', 'KLRC1')
+fibroblast_genes  = c('SFRP2', 'SPARC', 'MMP2', 'COL3A1', 'COL1A1', 'COL1A2', 'EMILIN1', 'PDGFRB')
+endothelial_genes = c('PECAM1', 'PLVAP', 'CDH5', 'KDR')
+ccrcc_genes       = c('CA9', 'NDUFA4L2', 'REG1A', 'CP', 'FABP7', 'CD70', 'HAVCR1', 'COL23A1', 'ENPP3', 'NETO2')
+cd8_genes         = c('CD3D', 'CD3E', 'CD8A')
+cd4_genes         = c('CD3E', 'CD3D', 'IL7R')
+b_genes           = c('CD79A', 'CD79B', 'MS4A1')
+plasma_genes      = c('IGKC')
+mast_genes        = c('TPSAB1', 'TPSB2', 'KIT')
+caf_genes         = c('ACTA2', 'TAGLN')
+tam_genes         = c('GPNMB', 'SLC40A1', 'MSR1')
+
+ccrcc_su_genes    = c('CA9', 'NDUFA4L2')
+
+alra.sobj <- AddModuleScore(alra.sobj,
+                  features = list(ccrcc_su_genes),
+                  name="ccrcc_su")
+
+alra.sobj <- AddModuleScore(alra.sobj,
+                  features = list(prcc_genes),
+                  name="prcc_enriched")
+
+alra.sobj <- AddModuleScore(alra.sobj,
+                  features = list(chrcc_genes),
+                  name="chrcc_enriched")
+
+alra.sobj <- AddModuleScore(alra.sobj,
+                  features = list(macrophage_genes),
+                  name="macrophage_enriched")
+
+alra.sobj <- AddModuleScore(alra.sobj,
+                  features = list(monocyte_genes),
+                  name="monocyte_enriched")
+
+alra.sobj <- AddModuleScore(alra.sobj,
+                  features = list(dendritic_genes),
+                  name="dendritic_enriched")
+
+alra.sobj <- AddModuleScore(alra.sobj,
+                  features = list(nk_genes),
+                  name="nk_enriched")
+
+alra.sobj <- AddModuleScore(alra.sobj,
+                  features = list(fibroblast_genes),
+                  name="fibroblast_enriched")
+
+alra.sobj <- AddModuleScore(alra.sobj,
+                  features = list(endothelial_genes),
+                  name="endothelial_enriched")
+
+alra.sobj <- AddModuleScore(alra.sobj,
+                  features = list(ccrcc_genes),
+                  name="ccrcc_enriched")
+
+alra.sobj <- AddModuleScore(alra.sobj,
+                  features = list(cd8_genes),
+                  name="cd8_enriched")
+
+alra.sobj <- AddModuleScore(alra.sobj,
+                  features = list(cd4_genes),
+                  name="cd4_enriched")
+
+alra.sobj <- AddModuleScore(alra.sobj,
+                  features = list(b_genes),
+                  name="b_enriched")
+
+# alra.sobj <- AddModuleScore(alra.sobj,
+#                   features = list(plasma_genes),
+#                   name="plasma_enriched")
+
+alra.sobj <- AddModuleScore(alra.sobj,
+                  features = list(mast_genes),
+                  name="mast_enriched")
+
+alra.sobj <- AddModuleScore(alra.sobj,
+                  features = list(caf_genes),
+                  name="caf_enriched")
+
+alra.sobj <- AddModuleScore(alra.sobj,
+                  features = list(tam_genes),
+                  name="tam_enriched")
+```
+
+
+## UMAP colored by leiden
+```{r umap leiden, message=FALSE}
+DimPlot(alra.sobj, reduction = "umap", label = TRUE, label.box = TRUE, 
+        label.size = 3, repel = TRUE)
+```
+
+
+## Plot by gene set
+```{r plot by geneset, message=FALSE}
+library(RColorBrewer)
+FeaturePlot(alra.sobj,
+            features = "ccrcc_su1", label = TRUE, repel = TRUE) +
+            scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "Spectral")))
+
+FeaturePlot(alra.sobj,
+            features = "prcc_enriched1", label = TRUE, repel = TRUE) +
+            scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "Spectral")))
+
+FeaturePlot(alra.sobj,
+            features = "chrcc_enriched1", label = TRUE, repel = TRUE) +
+            scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "Spectral")))
+
+FeaturePlot(alra.sobj,
+            features = "macrophage_enriched1", label = TRUE, repel = TRUE) +
+            scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "Spectral")))
+
+FeaturePlot(alra.sobj,
+            features = "monocyte_enriched1", label = TRUE, repel = TRUE) +
+            scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "Spectral")))
+
+FeaturePlot(alra.sobj,
+            features = "dendritic_enriched1", label = TRUE, repel = TRUE) +
+            scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "Spectral")))
+
+FeaturePlot(alra.sobj,
+            features = "nk_enriched1", label = TRUE, repel = TRUE) +
+            scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "Spectral")))
+
+FeaturePlot(alra.sobj,
+            features = "fibroblast_enriched1", label = TRUE, repel = TRUE) +
+            scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "Spectral")))
+
+FeaturePlot(alra.sobj,
+            features = "endothelial_enriched1", label = TRUE, repel = TRUE) +
+            scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "Spectral")))
+
+FeaturePlot(alra.sobj,
+            features = "ccrcc_enriched1", label = TRUE, repel = TRUE) +
+            scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "Spectral")))
+
+FeaturePlot(alra.sobj,
+            features = "cd8_enriched1", label = TRUE, repel = TRUE) +
+            scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "Spectral")))
+
+FeaturePlot(alra.sobj,
+            features = "cd4_enriched1", label = TRUE, repel = TRUE) +
+            scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "Spectral")))
+
+FeaturePlot(alra.sobj,
+            features = "b_enriched1", label = TRUE, repel = TRUE) +
+            scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "Spectral")))
+
+FeaturePlot(alra.sobj,
+            features = "mast_enriched1", label = TRUE, repel = TRUE) +
+            scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "Spectral")))
+
+FeaturePlot(alra.sobj,
+            features = "caf_enriched1", label = TRUE, repel = TRUE) +
+            scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "Spectral")))
+
+FeaturePlot(alra.sobj,
+            features = "tam_enriched1", label = TRUE, repel = TRUE) +
+            scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "Spectral")))
+```
+
+
+
+```{r}
+FeaturePlot(alra.sobj,
+            features = 'LTR2B') +
+            scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "Spectral")))
+```
+

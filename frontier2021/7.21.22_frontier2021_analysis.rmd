@@ -1,0 +1,579 @@
+---
+title: "Frontier 2021 Analysis"
+author: "Kevin Feng"
+date: '2022-07-21'
+output:
+  html_document:
+    code_folding: show
+    fig_width: 15
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+### This code follows the following tutorial: https://satijalab.org/seurat/articles/pbmc3k_tutorial.html
+
+
+## Import Data
+Read in the output from CellRanger Count
+```{r import data, message=FALSE}
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(ggplot2)
+library(ggrepel)
+
+# read in h5
+s51.data <- Read10X_h5('s51_cellranger_count_outs/filtered_feature_bc_matrix.h5')
+s52.data <- Read10X_h5('s52_cellranger_count_outs/filtered_feature_bc_matrix.h5')
+
+# create seurat object
+s51 <- CreateSeuratObject(counts = s51.data, project = 'frontier2021.s51', min.cells = 5, min.features = 200) # 11298 cells, 17146  features
+
+s52 <- CreateSeuratObject(counts = s52.data, project = 'frontier2021.s52', min.cells = 5, min.features = 200) # 11277 cells, 17182 features
+
+# merge 
+combined.sobj <- merge(s51, y = s52, add.cell.ids = c("s51", "s52"), project = "frontier2021.combined")
+combined.sobj # 22575 cells, 17594 features
+
+table(combined.sobj$orig.ident)
+```
+
+## Standard pre-preprocessing workflow
+### QC and selecting cells for further analysis
+```{r qc, message=FALSE}
+# The [[ operator can add columns to object metadata. This is a great place to stash QC stats
+combined.sobj[["percent.mt"]] <- PercentageFeatureSet(combined.sobj, pattern = "^MT")
+
+# Visualize QC metrics as a violin plot
+VlnPlot(combined.sobj, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+
+
+# FeatureScatter is typically used to visualize feature-feature relationships, but can be used
+# for anything calculated by the object, i.e. columns in object metadata, PC scores etc.
+
+plot1 <- FeatureScatter(combined.sobj, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 <- FeatureScatter(combined.sobj, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1 + plot2
+
+# filter out some cells
+combined.sobj <- subset(combined.sobj, subset = nFeature_RNA > 200 & nFeature_RNA < 5000 & percent.mt < 0.01)
+```
+
+
+### Normalizing the Data 
+After removing unwanted cells from the dataset, the next step is to normalize the data. By default, we employ a global-scaling normalization method “LogNormalize” that normalizes the feature expression measurements for each cell by the total expression, multiplies this by a scale factor (10,000 by default), and log-transforms the result. Normalized values are stored in combined.sobj[["RNA"]]@data.
+```{r norm, message=FALSE}
+# these are defaults, can call combined.sobj <- NormalizeData(combined.sobj) instead
+combined.sobj <- NormalizeData(combined.sobj, normalization.method = "LogNormalize", scale.factor = 10000)
+# Normalized values are stored in combined.sobj[["RNA"]]@data
+```
+
+
+### Identification of Highly Variable Features
+We next calculate a subset of features that exhibit high cell-to-cell variation in the dataset (i.e, they are highly expressed in some cells, and lowly expressed in others). We and others have found that focusing on these genes in downstream analysis helps to highlight biological signal in single-cell datasets.
+
+Our procedure in Seurat is described in detail here, and improves on previous versions by directly modeling the mean-variance relationship inherent in single-cell data, and is implemented in the FindVariableFeatures() function. By default, we return 2,000 features per dataset. These will be used in downstream analysis, like PCA.
+```{r hvg, message=FALSE}
+combined.sobj <- FindVariableFeatures(combined.sobj, selection.method = "vst", nfeatures = 2000)
+
+# Identify the 10 most highly variable genes
+top10 <- head(VariableFeatures(combined.sobj), 10)
+
+# plot variable features with and without labels
+plot1 <- VariableFeaturePlot(combined.sobj)
+plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+plot1 + plot2
+```
+
+## Try harmony 
+
+
+### Scaling the Data
+Next, we apply a linear transformation (‘scaling’) that is a standard pre-processing step prior to dimensional reduction techniques like PCA. The ScaleData() function:
+
+* Shifts the expression of each gene, so that the mean expression across cells is 0
+* Scales the expression of each gene, so that the variance across cells is 1
+  + This step gives equal weight in downstream analyses, so that highly-expressed genes do not dominate
+* The results of this are stored in combined.sobj[["RNA"]]@scale.data
+```{r scale, message=FALSE}
+all.genes <- rownames(combined.sobj)
+combined.sobj <- ScaleData(combined.sobj, features = all.genes)
+```
+
+
+## Perform Linear Dimensional Reduction
+Perform PCA on the scaled data. By default, only the previously determined variable features are used as input, but can be defined using features argument if you wish to choose a different subset.
+```{r linear dim reduction, message=FALSE}
+combined.sobj <- RunPCA(combined.sobj, features = VariableFeatures(object = combined.sobj))
+
+# Examine and visualize PCA results a few different ways
+print(combined.sobj[["pca"]], dims = 1:5, nfeatures = 5)
+VizDimLoadings(combined.sobj, dims = 1:2, reduction = "pca")
+DimPlot(combined.sobj, reduction = "pca")
+```
+
+
+### DimHeatmap()
+In particular DimHeatmap() allows for easy exploration of the primary sources of heterogeneity in a dataset, and can be useful when trying to decide which PCs to include for further downstream analyses. Both cells and features are ordered according to their PCA scores. Setting cells to a number plots the ‘extreme’ cells on both ends of the spectrum, which dramatically speeds plotting for large datasets. Though clearly a supervised analysis, we find this to be a valuable tool for exploring correlated feature sets.
+```{r dimheatmap 1, message=FALSE}
+DimHeatmap(combined.sobj, dims = 1, cells = 500, balanced = TRUE)
+```
+```{r dimheatmap 1 to 15, message=FALSE, fig.height=25}
+DimHeatmap(combined.sobj, dims = 1:15, cells = 500, balanced = TRUE)
+```
+
+## Determine the 'dimensionality' of the dataset
+Note: Jackstraw doesn't run in HTML.
+To overcome the extensive technical noise in any single feature for scRNA-seq data, Seurat clusters cells based on their PCA scores, with each PC essentially representing a ‘metafeature’ that combines information across a correlated feature set. The top principal components therefore represent a robust compression of the dataset. However, how many components should we choose to include? 10? 20? 100?
+
+In Macosko et al, we implemented a resampling test inspired by the JackStraw procedure. We randomly permute a subset of the data (1% by default) and rerun PCA, constructing a ‘null distribution’ of feature scores, and repeat this procedure. We identify ‘significant’ PCs as those who have a strong enrichment of low p-value features.
+```{r determine dims, message=FALSE, eval=FALSE}
+# NOTE: This process can take a long time for big datasets, comment out for expediency. More
+# approximate techniques such as those implemented in ElbowPlot() can be used to reduce
+# computation time
+combined.sobj <- JackStraw(combined.sobj, num.replicate = 100, dims = 40)
+combined.sobj <- ScoreJackStraw(combined.sobj, dims = 1:40)
+```
+
+The JackStrawPlot() function provides a visualization tool for comparing the distribution of p-values for each PC with a uniform distribution (dashed line). ‘Significant’ PCs will show a strong enrichment of features with low p-values (solid curve above the dashed line). 
+```{r plot jackstraw, message=FALSE, eval=FALSE}
+JackStrawPlot(combined.sobj, dims = 1:40)
+```
+
+An alternative heuristic method generates an ‘Elbow plot’: a ranking of principle components based on the percentage of variance explained by each one (ElbowPlot() function). In this example, we can observe an ‘elbow’ around PC20, suggesting that the majority of true signal is captured in the first 20 PCs.
+```{r elbow plot, message=FALSE}
+ElbowPlot(combined.sobj, ndims = 40)
+```
+
+## Cluster the cells
+```{r cluster cells, message=FALSE}
+combined.sobj <- FindNeighbors(combined.sobj, dims = 1:25)
+combined.sobj <- FindClusters(combined.sobj, resolution = 0.6)
+
+# Look at cluster IDs of the first 5 cells
+head(Idents(combined.sobj), 5)
+```
+
+
+## Run non-linear dimensional reduction (UMAP/tSNE)
+```{r non-lin dim reduc, message=FALSE}
+# If you haven't installed UMAP, you can do so via reticulate::py_install(packages =
+# 'umap-learn')
+combined.sobj <- RunUMAP(combined.sobj, dims = 1:25)
+
+# note that you can set `label = TRUE` or use the LabelClusters function to help label
+# individual clusters
+DimPlot(combined.sobj, reduction = "umap", label = TRUE, label.box = TRUE, 
+        label.size = 3, repel = TRUE)
+ggsave(DimPlot(combined.sobj, reduction = "umap", label = TRUE, label.box = TRUE, 
+        label.size = 3, repel = TRUE), 
+       filename = 'umap_leiden.pdf')
+```
+
+### Save RDS
+```{r save, message=FALSE}
+saveRDS(combined.sobj, file = "frontier2021_preprocessed.rds")
+```
+
+
+### Load RDS
+```{r load, message=FALSE}
+combined.sobj <- readRDS("frontier2021_preprocessed.rds")
+```
+
+
+## Finding differentially expressed features (cluster biomarkers)
+This is slow!
+```{r find diff exp feats, eval=FALSE}
+# find markers for every cluster compared to all remaining cells, report only the positive
+# ones
+frontier.markers <- FindAllMarkers(combined.sobj, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+top20.deg <- frontier.markers %>%
+    group_by(cluster) %>%
+    slice_max(n = 20, order_by = avg_log2FC)
+
+# write to csv
+write.csv(top20.deg, file = 'top.20.deg.by.cluster.csv')
+```
+
+
+## Read in gene lists and add them as module score
+```{r read in gene lists, message=FALSE}
+# read in gene lists
+prcc_genes        = c('CDKN2A')
+chrcc_genes       = c('RHCG')
+macrophage_genes  = c('CD68', 'CD163')
+monocyte_genes    = c('CD14', 'LYZ', 'S100A12', 'S100A9', 'S100A8')
+dendritic_genes   = c('FCER1A', 'CD1E', 'CD1C', 'HLA-DMA', 'HLA-DMB')
+nk_genes          = c('KLRD1', 'KLRC1')
+fibroblast_genes  = c('SFRP2', 'SPARC', 'MMP2', 'COL3A1', 'COL1A1', 'COL1A2', 'EMILIN1', 'PDGFRB')
+endothelial_genes = c('PECAM1', 'PLVAP', 'CDH5', 'KDR')
+ccrcc_genes       = c('CA9', 'NDUFA4L2', 'REG1A', 'CP', 'FABP7', 'CD70', 'HAVCR1', 'COL23A1', 'ENPP3', 'NETO2')
+cd8_genes         = c('CD3D', 'CD3E', 'CD8A')
+cd4_genes         = c('CD3E', 'CD3D', 'IL7R')
+b_genes           = c('CD79A', 'CD79B', 'MS4A1')
+plasma_genes      = c('IGKC')
+mast_genes        = c('TPSAB1', 'TPSB2', 'KIT')
+caf_genes         = c('ACTA2', 'TAGLN')
+tam_genes         = c('GPNMB', 'SLC40A1', 'MSR1')
+
+ccrcc_su_genes    = c('CA9', 'NDUFA4L2')
+
+combined.sobj <- AddModuleScore(combined.sobj,
+                  features = list(ccrcc_su_genes),
+                  name="ccrcc_su")
+
+combined.sobj <- AddModuleScore(combined.sobj,
+                  features = list(prcc_genes),
+                  name="prcc_enriched")
+
+combined.sobj <- AddModuleScore(combined.sobj,
+                  features = list(chrcc_genes),
+                  name="chrcc_enriched")
+
+combined.sobj <- AddModuleScore(combined.sobj,
+                  features = list(macrophage_genes),
+                  name="macrophage_enriched")
+
+combined.sobj <- AddModuleScore(combined.sobj,
+                  features = list(monocyte_genes),
+                  name="monocyte_enriched")
+
+combined.sobj <- AddModuleScore(combined.sobj,
+                  features = list(dendritic_genes),
+                  name="dendritic_enriched")
+
+combined.sobj <- AddModuleScore(combined.sobj,
+                  features = list(nk_genes),
+                  name="nk_enriched")
+
+combined.sobj <- AddModuleScore(combined.sobj,
+                  features = list(fibroblast_genes),
+                  name="fibroblast_enriched")
+
+combined.sobj <- AddModuleScore(combined.sobj,
+                  features = list(endothelial_genes),
+                  name="endothelial_enriched")
+
+combined.sobj <- AddModuleScore(combined.sobj,
+                  features = list(ccrcc_genes),
+                  name="ccrcc_enriched")
+
+combined.sobj <- AddModuleScore(combined.sobj,
+                  features = list(cd8_genes),
+                  name="cd8_enriched")
+
+combined.sobj <- AddModuleScore(combined.sobj,
+                  features = list(cd4_genes),
+                  name="cd4_enriched")
+
+combined.sobj <- AddModuleScore(combined.sobj,
+                  features = list(b_genes),
+                  name="b_enriched")
+
+# combined.sobj <- AddModuleScore(combined.sobj,
+#                   features = list(plasma_genes),
+#                   name="plasma_enriched")
+
+combined.sobj <- AddModuleScore(combined.sobj,
+                  features = list(mast_genes),
+                  name="mast_enriched")
+
+combined.sobj <- AddModuleScore(combined.sobj,
+                  features = list(caf_genes),
+                  name="caf_enriched")
+
+combined.sobj <- AddModuleScore(combined.sobj,
+                  features = list(tam_genes),
+                  name="tam_enriched")
+```
+
+
+### Plot by gene set
+```{r plot by geneset, message=FALSE}
+library(RColorBrewer)
+FeaturePlot(combined.sobj,
+            features = "ccrcc_su1", label = TRUE, repel = TRUE) +
+            scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "Spectral")))
+
+FeaturePlot(combined.sobj,
+            features = "prcc_enriched1", label = TRUE, repel = TRUE) +
+            scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "Spectral")))
+
+FeaturePlot(combined.sobj,
+            features = "chrcc_enriched1", label = TRUE, repel = TRUE) +
+            scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "Spectral")))
+
+FeaturePlot(combined.sobj,
+            features = "macrophage_enriched1", label = TRUE, repel = TRUE) +
+            scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "Spectral")))
+
+FeaturePlot(combined.sobj,
+            features = "monocyte_enriched1", label = TRUE, repel = TRUE) +
+            scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "Spectral")))
+
+FeaturePlot(combined.sobj,
+            features = "dendritic_enriched1", label = TRUE, repel = TRUE) +
+            scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "Spectral")))
+
+FeaturePlot(combined.sobj,
+            features = "nk_enriched1", label = TRUE, repel = TRUE) +
+            scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "Spectral")))
+
+FeaturePlot(combined.sobj,
+            features = "fibroblast_enriched1", label = TRUE, repel = TRUE) +
+            scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "Spectral")))
+
+FeaturePlot(combined.sobj,
+            features = "endothelial_enriched1", label = TRUE, repel = TRUE) +
+            scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "Spectral")))
+
+FeaturePlot(combined.sobj,
+            features = "ccrcc_enriched1", label = TRUE, repel = TRUE) +
+            scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "Spectral")))
+
+FeaturePlot(combined.sobj,
+            features = "cd8_enriched1", label = TRUE, repel = TRUE) +
+            scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "Spectral")))
+
+FeaturePlot(combined.sobj,
+            features = "cd4_enriched1", label = TRUE, repel = TRUE) +
+            scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "Spectral")))
+
+FeaturePlot(combined.sobj,
+            features = "b_enriched1", label = TRUE, repel = TRUE) +
+            scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "Spectral")))
+
+FeaturePlot(combined.sobj,
+            features = "mast_enriched1", label = TRUE, repel = TRUE) +
+            scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "Spectral")))
+
+FeaturePlot(combined.sobj,
+            features = "caf_enriched1", label = TRUE, repel = TRUE) +
+            scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "Spectral")))
+
+FeaturePlot(combined.sobj,
+            features = "tam_enriched1", label = TRUE, repel = TRUE) +
+            scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "Spectral")))
+```
+
+## Redefine clusters
+```{r redfine clusters, include=FALSE, eval=FALSE}
+new.cluster.ids <- c('ccRCC_0', 'ccRCC_1', 'ccRCC_2', 'CD8_0', 'ccRCC_3', 'macrophage_0',
+                     'CD4_0', 'NK_0', 'CD8_1', 'monocyte_0', 'caf_0', 'endothelial_0',
+                     'tam_0', '?_0', 'endothelial_1', 'endothelial_2', 'ccRCC_4', 
+                     'endothelial_3', 'ccRCC_5', 'CD4/CD8_0', 'B_0', 'tam/macro_0',
+                     'mast_0', 'caf/fibro_0')
+names(new.cluster.ids) <- levels(combined.sobj)
+combined.sobj <- RenameIdents(combined.sobj, new.cluster.ids)
+DimPlot(combined.sobj, reduction = "umap", label = TRUE, label.box = TRUE, 
+        label.size = 2, repel = TRUE)
+
+s51.sobj <- subset(x = combined.sobj, subset = orig.ident == "frontier2021.s51")
+s52.sobj <- subset(x = combined.sobj, subset = orig.ident == "frontier2021.s52")
+
+DimPlot(s51.sobj, reduction = 'umap', cols = c('red', 'red', 'red', 'black', 'red', rep('black', 12), 'red', rep('black', 5))) + theme(legend.position = "none")
+
+DimPlot(s52.sobj, reduction = 'umap', cols = c('red', 'black', 'red', rep('black', 10), 'red', rep('black', 6)))+ theme(legend.position = "none")
+
+FeaturePlot(s52.sobj,
+            features = "ccrcc_enriched1",) +
+            scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "Spectral")))
+
+FeaturePlot(s52.sobj,
+            features = "Harlequin-int",) +
+            scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "Spectral")))
+
+FeaturePlot(s52.sobj,
+            features = "LTR2B",) +
+            scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "Spectral")))
+
+FeaturePlot(s52.sobj,
+            features = "MER4-int",) +
+            scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "Spectral")))
+
+
+FeaturePlot(s52.sobj,
+            features = "CD70",) +
+            scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "Spectral")))
+
+FeaturePlot(s52.sobj,
+            features = "CA9",) +
+            scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "Spectral")))
+```
+
+
+## TE's in Su ccRCC
+```{r te in ccRCC}
+# read in TE gtf file 
+te.gtf <- rtracklayer::import('GRCh38_rmsk_TE.gtf')
+te.gtf.df <- as.data.frame(te.gtf)
+te.gene.ids <- te.gtf.df %>% select(gene_id)
+
+# # get top 100 DEG's for each cluster
+# top100.deg <- frontier.markers %>%
+#     group_by(cluster) %>%
+#     slice_max(n = 100, order_by = avg_log2FC)
+
+# subset for DEG's belonging to ccRCC clusters 1 and 16
+ccrcc.degs <- frontier.markers %>% filter((cluster == 1) | (cluster == 16))
+
+# find out which DEG's are TE's
+is.te <- ccrcc.degs$gene %in% te.gene.ids[,1]
+
+sum(is.te) # 185 te's
+
+# subset for the te's
+ccrcc.tes <- ccrcc.degs[is.te,]
+
+table(ccrcc.tes$cluster) # all belong to cluster 1 
+
+# sort by avg_log2FC
+ccrcc.tes <- ccrcc.tes[order(ccrcc.tes$avg_log2FC, decreasing = TRUE), ]
+write.csv(ccrcc.tes, file = 'su_ccRCC_te.csv')
+```
+
+
+## Plot UMAP colored by TE's
+```{r te umap}
+# read from saved csv
+ccrcc.tes <- read.csv('su_ccRCC_te.csv')
+rownames(ccrcc.tes) <- ccrcc.tes$gene
+ccrcc.tes$X <- NULL
+
+# there are 3 TE's with avg_log2FC >= 1.5
+# hard coded for larger graphs in R studio 
+ccrcc.tes.1.5fc <- ccrcc.tes %>% filter(avg_log2FC >= 1.5)
+FeaturePlot(combined.sobj, features = ccrcc.tes.1.5fc$gene[1]) + scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "RdBu")))
+FeaturePlot(combined.sobj, features = ccrcc.tes.1.5fc$gene[2]) + scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "RdBu")))
+FeaturePlot(combined.sobj, features = ccrcc.tes.1.5fc$gene[3]) + scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "RdBu")))
+```
+
+## Compare TE's with Westlake
+How to interpret scanpy score: The score is the average expression of a set of genes subtracted with the average expression of a reference set of genes. The reference set is randomly sampled from the gene_pool for each binned expression value.
+```{r te compare vs westlake}
+# read in westlake deg list from scanpy and subset for just TE's
+westlake.deg <- read.csv('westlake_scanpy_ccrcc_cluster_degs.csv')
+westlake.is.te <- westlake.deg$names %in% te.gene.ids[,1]
+westlake.te <- westlake.deg[westlake.is.te,]
+westlake.te
+
+# how many of the TE's found here are in the westlake data?
+sum(ccrcc.tes$gene %in% westlake.te$names) # all TE's found here are also identified in westlake
+
+# how many TE's have log fold change values and are not NA
+sum(!is.na(westlake.te$logfoldchanges)) # 305
+
+# lets subset for those 
+westlake.te.not.na <- westlake.te[!is.na(westlake.te$logfoldchanges),]
+
+# how many of our TE's are in westlakes not na TE's?
+sum(ccrcc.tes$gene %in% westlake.te.not.na$names) # 0
+
+
+westlake.te[westlake.te$names %in% ccrcc.tes$gene,] %>% filter(pvals_adj < 0.01)
+```
+
+## Annotate 176 TE's from Frontier
+```{r annotate te}
+ccrcc.tes.fil <- ccrcc.tes %>% filter(p_val_adj < 0.01)
+ccrcc.te.annotations <- te.gtf.df[te.gtf.df$gene_id %in% ccrcc.tes.fil$gene, ]
+length(unique(ccrcc.te.annotations$gene_id))
+
+write.csv(ccrcc.te.annotations, file = 'frontier_ccrcc_176TE_annotations.csv')
+```
+
+## TE's in CAFs
+```{r}
+frontier.markers
+combined.sobj
+DimPlot(combined.sobj, label = TRUE)
+
+# subset for DEG's belonging to ccRCC clusters 1 and 16
+caf.degs <- frontier.markers %>% filter((cluster == 10) | (cluster == 23))
+
+# which of the DEG's are TE's?
+caf.degs[caf.degs$gene %in% te.gene.ids$gene_id,]
+```
+
+
+## ALRA Test
+```{r alra, message=FALSE}
+library(Seurat)
+library(SeuratData)
+library(SeuratWrappers)
+library(dplyr)
+
+# # load cds from rds
+combined.sobj <- readRDS("frontier2021_preprocessed.rds")
+# plot 3 TE's
+p1 <- FeaturePlot(combined.sobj, features = ccrcc.tes.1.5fc$gene)
+# run alra and set default assay to alra, set back to rna for DEA
+combined.sobj <- RunALRA(combined.sobj)
+DefaultAssay(combined.sobj) <- 'alra'
+# plot alra assay
+p2 <- FeaturePlot(combined.sobj, features = ccrcc.tes.1.5fc$gene, 
+                  cols = c("lightgrey", "red"))
+
+CombinePlots(list(p1, p2), ncol = 1)
+
+
+DefaultAssay(combined.sobj) <- 'RNA'
+#saveRDS(combined.sobj, file = "frontier2021_preprocessed_alra.rds")
+```
+
+
+## UMAP colored by sample 
+```{r color umap by sample}
+combined.sobj <- readRDS("frontier2021_preprocessed.rds")
+
+combined.sobj
+
+DimPlot(combined.sobj, reduction = "umap", group.by = 'orig.ident')
+```
+
+
+## DEA Clusters 0,1,2,4,16,18 vs rest
+```{r dea ccrcc clusters vs rest}
+# # load cds from rds
+combined.sobj <- readRDS("frontier2021_preprocessed.rds")
+new.cluster.ids <- c('ccRCC','ccRCC','ccRCC','other',
+                     'ccRCC','other','other','other',
+                     'other','other','other','other','other',
+                     'other','other','other', 'ccRCC', 'other', 'ccRCC', 'other',
+                     'other', 'other', 'other', 'other')
+names(new.cluster.ids) <- levels(combined.sobj)
+combined.sobj <- RenameIdents(combined.sobj, new.cluster.ids)
+
+ccrcc.markers.6.clusters <- FindMarkers(combined.sobj, ident.1 = 'ccRCC', assay = 'RNA')
+# sort by log2fc
+ccrcc.markers.6.clusters.sorted <- ccrcc.markers.6.clusters[order(-ccrcc.markers.6.clusters$avg_log2FC),]
+head(ccrcc.markers.6.clusters.sorted,20)
+
+te.markers.6.clusters <- ccrcc.markers.6.clusters.sorted %>% filter(rownames(ccrcc.markers.6.clusters.sorted) %in% te.gene.ids$gene_id)
+
+te.markers.6.clusters
+
+# redo above but with only s51 ccrccs
+combined.sobj <- readRDS("frontier2021_preprocessed.rds")
+new.cluster.ids <- c('ccRCC','other','ccRCC','other',
+                     'other','other','other','other',
+                     'other','other','other','other','other',
+                     'other','other','other', 'other', 'other', 'ccRCC', 'other',
+                     'other', 'other', 'other', 'other')
+names(new.cluster.ids) <- levels(combined.sobj)
+combined.sobj <- RenameIdents(combined.sobj, new.cluster.ids)
+
+ccrcc.markers.6.clusters <- FindMarkers(combined.sobj, ident.1 = 'ccRCC', assay = 'RNA')
+# sort by log2fc
+ccrcc.markers.6.clusters.sorted <- ccrcc.markers.6.clusters[order(-ccrcc.markers.6.clusters$avg_log2FC),]
+head(ccrcc.markers.6.clusters.sorted,20)
+
+te.markers.6.clusters <- ccrcc.markers.6.clusters.sorted %>% filter(rownames(ccrcc.markers.6.clusters.sorted) %in% te.gene.ids$gene_id)
+
+te.markers.6.clusters
+```
+

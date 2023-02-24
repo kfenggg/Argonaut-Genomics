@@ -1,0 +1,233 @@
+---
+title: "TE Transcript ID Shortlists"
+author: "Kevin Feng"
+date: '2022-07-25'
+output:
+  html_document:
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Read in our featureCount outputs
+These files were made with 7.22.22.featureCounts_testing_log2fc.R
+```{r load data}
+library(dplyr)
+te.06.df <- read.csv('featureCounts.su.0.01.adjpval.06.log2fc.csv', row.names = 1)
+colnames(te.06.df) <- c('counts', 'transcript_id')
+te.08.df <- read.csv('featureCounts.su.0.01.adjpval.08.log2fc.csv', row.names = 1)
+colnames(te.08.df) <- c('counts', 'transcript_id')
+te.1.df <- read.csv('featureCounts.su.0.01.adjpval.1.log2fc.csv', row.names = 1)
+colnames(te.1.df) <- c('counts', 'transcript_id')
+head(te.06.df)
+```
+
+## Get top 10 transcript ID's for each repName (gene_ID, rownames/names column)
+To do this we can add a column that is just the gene ID. We want everthing before the first underscore.
+```{r get top 10}
+te.06.df$gene_id <- sub("\\_.*", "", te.06.df$transcript_id)
+te.08.df$gene_id <- sub("\\_.*", "", te.08.df$transcript_id)
+te.1.df$gene_id <- sub("\\_.*", "", te.1.df$transcript_id)
+
+# te.06.df[order(te.06.df$gene_id, te.06.df$counts, decreasing=FALSE),]
+# te.06.df
+top.10.06 <- te.06.df %>%
+    group_by(gene_id) %>%
+    slice_max(n = 10, order_by = counts)
+
+top.10.08 <- te.08.df %>%
+    group_by(gene_id) %>%
+    slice_max(n = 10, order_by = counts)
+
+top.10.1 <- te.1.df %>%
+    group_by(gene_id) %>%
+    slice_max(n = 10, order_by = counts)
+
+
+# write.csv(top.10.06, 'top10.transcripts.06log2fc.csv')
+# write.csv(top.10.08, 'top10.transcripts.08log2fc.csv')
+# write.csv(top.10.1, 'top10.transcripts.1log2fc.csv')
+
+# add family_id and class_id from gtf
+# load gtf
+te.gtf <- rtracklayer::import('GRCh38_rmsk_TE.gtf')
+
+# add family and class id columns
+get.family.class <- function(te.df, gtf){
+  family.list = list()
+  class.list = list()
+  for (t_id in te.df$transcript_id){
+    row.info <- gtf[gtf$transcript_id == t_id]
+    family.list <- c(family.list, row.info$family_id)
+    class.list <- c(class.list, row.info$class_id)
+  }
+  te.df$family_id = unlist(family.list)
+  te.df$class_id = unlist(class.list)
+  return(te.df)
+}
+
+top.10.1 <- get.family.class(top.10.1, te.gtf)
+```
+
+
+## View non L1
+```{r view non L1}
+# DT::datatable(top.10.06[!startsWith(top.10.06$gene_id, 'L1'),],
+#           filter=list(position = 'top', plain = TRUE),
+#           selection = 'single',
+#           rownames = FALSE,
+#           options = list(pageLength = 5,lengthMenu = c(5, 10, 20),
+#                          autoWidth=TRUE))
+# 
+# DT::datatable(top.10.08[!startsWith(top.10.08$gene_id, 'L1'),],
+#           filter=list(position = 'top', plain = TRUE),
+#           selection = 'single',
+#           rownames = FALSE,
+#           options = list(pageLength = 5,lengthMenu = c(5, 10, 20),
+#                          autoWidth=TRUE))
+
+DT::datatable(top.10.1[!startsWith(top.10.1$family_id, 'L1'),],
+          filter=list(position = 'top', plain = TRUE),
+          selection = 'single',
+          rownames = FALSE,
+          options = list(pageLength = 5,lengthMenu = c(5, 10, 20),
+                         autoWidth=TRUE))
+
+```
+
+## View L1
+```{r view L1}
+# DT::datatable(top.10.06[startsWith(top.10.06$gene_id, 'L1'),],
+#           filter=list(position = 'top', plain = TRUE),
+#           selection = 'single',
+#           rownames = FALSE,
+#           options = list(pageLength = 5,lengthMenu = c(5, 10, 20),
+#                          autoWidth=TRUE))
+# 
+# DT::datatable(top.10.08[startsWith(top.10.08$gene_id, 'L1'),],
+#           filter=list(position = 'top', plain = TRUE),
+#           selection = 'single',
+#           rownames = FALSE,
+#           options = list(pageLength = 5,lengthMenu = c(5, 10, 20),
+#                          autoWidth=TRUE))
+
+DT::datatable(top.10.1[startsWith(top.10.1$family_id, 'L1'),],
+          filter=list(position = 'top', plain = TRUE),
+          selection = 'single',
+          rownames = FALSE,
+          options = list(pageLength = 5,lengthMenu = c(5, 10, 20),
+                         autoWidth=TRUE))
+
+```
+
+
+## Make bar plots
+Make bar plots of count distributions for each transcript_id grouped by gene_id.
+```{r make bar plots, message=FALSE, fig.width=10, fig.height=15}
+library(ggplot2)
+# # input: df with counts, transcript_id, gene_id, family_id, class_id
+# make.barplots <- function(df){
+#   
+# }
+
+# barplot + save
+p<-ggplot(data=top.10.1, aes(x=transcript_id, y=counts)) +
+  geom_bar(stat="identity") + facet_wrap(~gene_id, scales = 'free') + scale_y_continuous(limits=c(0,60000)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 7))
+ggsave('top10.1log2fc.barplots.pdf', plot = p, width = 15, height = 20, dpi = 100)
+p
+
+```
+
+
+## Get Fastas for transcript_ids
+```{r get fasta, eval=FALSE}
+library(GenomicRanges)
+library(BSgenome.Hsapiens.UCSC.hg38)
+library(data.table)
+# redo this with hammel gtf
+
+# ucsc is 0 based and ensembl is 1 based
+# rmsk is from ucsc so +1 is needed while hammel is ensembl and 1 based so no need to add 1
+
+# rmsk<-fread('rmsk.txt')
+# 
+# rmsk.gr <- GRanges(seqnames = Rle(rmsk$V6), 
+#                    ranges = IRanges(start = rmsk$V7, end = rmsk$V8), 
+#                    strand = Rle(rmsk$V10),
+#                    seqlengths = NULL, seqinfo = NULL,
+#                    repName = rmsk$V11,
+#                    repClass = rmsk$V12,
+#                    repFamily = rmsk$V13, 
+#                    repStart = rmsk$V14,
+#                    repEnd = rmsk$V15,
+#                    repLeft = rmsk$V16,
+#                    bin = rmsk$V1,
+#                    swScore = rmsk$V2,
+#                    milliDiv = rmsk$V3,
+#                    milliDel = rmsk$V4,
+#                    milliIns = rmsk$V5
+#                    )
+# # add 1 to the start of UCSC half-open 0-based coordinates
+# start(rmsk.gr) <- start(rmsk.gr) + 1
+# # saveRDS(rmsk.gr, file = 'ext/rmsk.gr.RDS')
+# 
+# # Keeping only the 25 standard chromosomes
+# rmsk.stdchr.gr <- keepStandardChromosomes(rmsk.gr, pruning.mode = 'tidy')
+# seqlevelsStyle(rmsk.stdchr.gr) <- "NCBI" # change seqnames from "chr1" to "1"
+# saveRDS(rmsk.stdchr.gr, file = 'rmsk.stdchr.gr.RDS')
+
+# rename
+te.gr <- te.gtf
+seqlevelsStyle(te.gr) <- "UCSC" # convert back to chr1 from 1 for get seq
+# subset for our TE's
+# gene_id = repName
+# family_id = repFamily
+# class_id = repClass
+te.interest.gr <- te.gr[te.gr$transcript_id %in% top.10.1$transcript_id]
+te.interest.gr <- keepStandardChromosomes(te.interest.gr, pruning.mode = 'tidy')
+te.interest.seq <- getSeq(Hsapiens, te.interest.gr)  # getseq, takes a while
+
+# get counts data
+te.transcript.counts = list()
+for (t_id in te.interest.gr$transcript_id){
+  te.transcript.counts = c(te.transcript.counts, top.10.1[top.10.1$transcript_id==t_id,]$counts)
+}
+# add to gr object
+te.interest.gr$counts = unlist(te.transcript.counts)
+
+# rename seqs: chr_start_stop_transcriptID_geneID_repFamily_repClass_counts
+names(te.interest.seq) <- paste0(seqnames(te.interest.gr), '_',
+                          start(te.interest.gr), '_',
+                          end(te.interest.gr), '_',
+                          te.interest.gr$transcript_id, '_',
+                          te.interest.gr$gene_id, '_',
+                          te.interest.gr$family_id, '_',
+                          te.interest.gr$class_id, '_',
+                          te.interest.gr$counts)
+
+
+# write fa file
+writeXStringSet(te.interest.seq, file = 'RCC_Su_single_cell_data_top10TEs_1_log2fc.fa')
+
+# write annotation csv
+te.interest.gr.df <- as.data.frame(te.interest.gr)
+
+te.anno.df <- as.data.frame(names(te.interest.seq))
+names(te.anno.df) <- 'seqname'
+te.anno.df$chr <- te.interest.gr.df$seqnames
+te.anno.df$start <- te.interest.gr.df$start
+te.anno.df$end <- te.interest.gr.df$end
+te.anno.df$transcript_id <- te.interest.gr.df$transcript_id
+te.anno.df$gene_id <- te.interest.gr.df$gene_id
+te.anno.df$family_id <- te.interest.gr.df$family_id
+te.anno.df$class_id <- te.interest.gr.df$class_id
+te.anno.df$counts <- te.interest.gr.df$counts
+
+head(te.anno.df)
+
+write.csv(te.anno.df, file = 'RCC_Su_single_cell_data_top10TEs_1_log2fc_annotations.csv')
+```
+

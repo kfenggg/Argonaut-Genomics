@@ -1,0 +1,28 @@
+---
+title: "Process Su Samples (N=2) Seperately"
+author: "Kevin Feng"
+date: "2022-07-29"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load in the samples 
+```{r import data, message=FALSE}
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(ggplot2)
+library(ggrepel)
+
+# read in h5
+s51.data <- Read10X_h5('s51_cellranger_count_outs/filtered_feature_bc_matrix.h5')
+s52.data <- Read10X_h5('s52_cellranger_count_outs/filtered_feature_bc_matrix.h5')
+
+# create seurat object
+s51.sobj <- CreateSeuratObject(counts = s51.data, project = 'frontier2021.s51', min.cells = 5, min.features = 200) # 11298 cells, 17146  features
+
+s52.sobj <- CreateSeuratObject(counts = s52.data, project = 'frontier2021.s52', min.cells = 5, min.features = 200) # 11277 cells, 17182 features
+```
