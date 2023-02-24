@@ -1,0 +1,234 @@
+---
+title: "Ferris 2021 Analysis"
+author: "Kevin Feng"
+date: '2022-07-21'
+output:
+  html_document:
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Import cellranger aggr output
+### CD45- samples
+```{r import, message=FALSE, eval=FALSE}
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+library(stringr)
+
+# read in data
+hn01.cd45n <- Read10X_h5('HN01_CD45n/outs/count/filtered_feature_bc_matrix.h5')
+hn08.cd45n <- Read10X_h5('HN08_CD45n/outs/count/filtered_feature_bc_matrix.h5')
+hn17.cd45n <- Read10X_h5('HN17_CD45n/outs/count/filtered_feature_bc_matrix.h5')
+hn18.cd45n <- Read10X_h5('HN18_CD45n/outs/count/filtered_feature_bc_matrix.h5')
+
+# make sobj
+hn01.cd45n.sobj <- CreateSeuratObject(counts = hn01.cd45n, project = 'ferris2021.hn01', min.cells = 5,
+                                      min.features = 200)
+hn01.cd45n.sobj <- CreateSeuratObject(counts = hn08.cd45n, project = 'ferris2021.hn08', min.cells = 5,
+                                      min.features = 200)
+hn17.cd45n.sobj <- CreateSeuratObject(counts = hn17.cd45n, project = 'ferris2021.hn17', min.cells = 5,
+                                      min.features = 200)
+hn18.cd45n.sobj <- CreateSeuratObject(counts = hn18.cd45n, project = 'ferris2021.hn18', min.cells = 5,
+                                      min.features = 200)
+
+hn01.cd45n.sobj
+hn08.cd45n.sobj
+hn17.cd45n.sobj
+hn18.cd45n.sobj
+
+# make a combined sobj
+combined.cd45n.sobj <- merge(hn01.cd45n.sobj, y = c(hn08.cd45n.sobj, hn17.cd45n.sobj, hn18.cd45n.sobj), 
+                             add.cell.ids = c("hn01.cd45n", "hn08.cd45n", "hn17.cd45n", "hn18.cd45n"), 
+                             project = "ferris2021.cd45n.combined")
+
+combined.cd45n.sobj
+```
+
+
+## Preprocess
+```{r preprocess, message=FALSE, eval=FALSE}
+# calc %mt and make some basic plots for qc
+preprocess.plots <- function(sobj){
+  sobj[["percent.mt"]] <- PercentageFeatureSet(sobj, pattern = "^MT")
+  vioplot <- VlnPlot(sobj, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+  plot1 <- FeatureScatter(sobj, feature1 = "nCount_RNA", feature2 = "percent.mt")
+  plot2 <- FeatureScatter(sobj, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+  print(vioplot)
+  print(plot1 + plot2)
+  return(sobj)
+}
+# check MT genes
+# rownames(hn01.cd45n.sobj)[str_detect(genes, "^MT")]
+
+hn01.cd45n.sobj <- preprocess.plots(hn01.cd45n.sobj)
+hn08.cd45n.sobj <- preprocess.plots(hn08.cd45n.sobj)
+hn17.cd45n.sobj <- preprocess.plots(hn17.cd45n.sobj)
+hn18.cd45n.sobj <- preprocess.plots(hn18.cd45n.sobj)
+
+
+# filter out some cells
+hn01.cd45n.sobj <- subset(hn01.cd45n.sobj, subset = nFeature_RNA > 200 & nFeature_RNA < 5000 & percent.mt < 3)
+
+hn08.cd45n.sobj <- subset(hn08.cd45n.sobj, subset = nFeature_RNA > 200 & nFeature_RNA < 5000 & percent.mt < 3)
+
+hn17.cd45n.sobj <- subset(hn17.cd45n.sobj, subset = nFeature_RNA > 200 & nFeature_RNA < 5000 & percent.mt < 3)
+
+hn18.cd45n.sobj <- subset(hn18.cd45n.sobj, subset = nFeature_RNA > 200 & nFeature_RNA < 5000 & percent.mt < 3)
+
+# normalize and identify highly variable features
+norm.hvg <- function(sobj){
+  sobj <- NormalizeData(sobj)
+  sobj <- FindVariableFeatures(sobj, selection.method = "vst", nfeatures = 2000)
+  # identify the top 10 most highly variable features
+  top10 <- head(VariableFeatures(sobj), 10)
+  p1 <- VariableFeaturePlot(sobj)
+  p2 <- LabelPoints(plot = p1, points = top10, repel = TRUE)
+  print(p1+p2)
+  return(sobj)
+}
+
+hn01.cd45n.sobj <- norm.hvg(hn01.cd45n.sobj)
+hn08.cd45n.sobj <- norm.hvg(hn08.cd45n.sobj)
+hn17.cd45n.sobj <- norm.hvg(hn17.cd45n.sobj)
+hn18.cd45n.sobj <- norm.hvg(hn18.cd45n.sobj)
+
+# scale the data
+scale.data <- function(sobj){
+  all.genes <- rownames(sobj)
+  sobj <- ScaleData(sobj, features = all.genes)
+  return(sobj)
+}
+
+hn01.cd45n.sobj <- scale.data(hn01.cd45n.sobj)
+hn08.cd45n.sobj <- scale.data(hn08.cd45n.sobj)
+hn17.cd45n.sobj <- scale.data(hn17.cd45n.sobj)
+hn18.cd45n.sobj <- scale.data(hn18.cd45n.sobj)
+```
+
+## Dimensionality Reduction
+```{r dim reduc, message=FALSE, eval=FALSE}
+# visualize pca loadings
+pca.viz <- function(sobj){
+  sobj <- RunPCA(sobj, features = VariableFeatures(object = sobj))
+  print(ElbowPlot(sobj))
+  return(sobj)
+}
+
+hn01.cd45n.sobj <- pca.viz(hn01.cd45n.sobj) # 10 pcs
+hn08.cd45n.sobj <- pca.viz(hn08.cd45n.sobj) # 15 pcs
+hn17.cd45n.sobj <- pca.viz(hn17.cd45n.sobj) # 12 pcs
+hn18.cd45n.sobj <- pca.viz(hn18.cd45n.sobj) # 14 pcs
+```
+
+## Cluster the cells
+```{r cluster the cells, message=FALSE, eval=FALSE}
+cluster.cells <- function(sobj, n.dims = 10, n.res = 0.5){
+  sobj <- FindNeighbors(sobj, dims = 1:n.dims)
+  sobj <- FindClusters(sobj, resolution = n.res)
+  sobj <- RunUMAP(sobj, dims = 1:n.dims)
+  print(DimPlot(sobj, reduction = "umap"))
+  return(sobj)
+}
+
+hn01.cd45n.sobj <- cluster.cells(hn01.cd45n.sobj, n.dims = 5) # 10 pcs
+hn08.cd45n.sobj <- cluster.cells(hn08.cd45n.sobj, n.dims = 5) # 15 pcs
+hn17.cd45n.sobj <- cluster.cells(hn17.cd45n.sobj, n.dims = 5) # 12 pcs
+hn18.cd45n.sobj <- cluster.cells(hn18.cd45n.sobj, n.dims = 5) # 14 pcs
+```
+
+### Save preprocessed and clustered RDS
+```{r save, message=FALSE, eval=FALSE, include=FALSE}
+saveRDS(hn01.cd45n.sobj, file = "preprocessed_clustered_rds_by_patient/hn01.cd45n.rds")
+saveRDS(hn08.cd45n.sobj, file = "preprocessed_clustered_rds_by_patient/hn08.cd45n.rds")
+saveRDS(hn17.cd45n.sobj, file = "preprocessed_clustered_rds_by_patient/hn17.cd45n.rds")
+saveRDS(hn18.cd45n.sobj, file = "preprocessed_clustered_rds_by_patient/hn18.cd45n.rds")
+```
+
+
+### Load preprocessed and clustered RDS
+```{r load, message=FALSE}
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+library(stringr)
+
+hn01.cd45n.sobj <- readRDS("preprocessed_clustered_rds_by_patient/hn01.cd45n.rds")
+hn08.cd45n.sobj <- readRDS("preprocessed_clustered_rds_by_patient/hn08.cd45n.rds")
+hn17.cd45n.sobj <- readRDS("preprocessed_clustered_rds_by_patient/hn17.cd45n.rds")
+hn18.cd45n.sobj <- readRDS("preprocessed_clustered_rds_by_patient/hn18.cd45n.rds")
+```
+
+
+## Color by genes
+Genes were found in the Ferris 2021 paper and the sc dataset document.
+```{r color by genes hnscc, message=FALSE, fig.width=10, fig.height=13}
+markers <- read.csv('marker_genes.csv')
+markers
+
+# plot.features <- function(sobj, feature.df){
+#   for (gene.set in 1:ncol(feature.df)){
+#     print(FeaturePlot(sobj, features = c(feature.df[,gene.set])))
+#   }
+# }
+# plot.features(hn01.cd45n.sobj, markers)
+
+# hnscc set of 9 markers
+FeaturePlot(hn01.cd45n.sobj, features = c(markers$hnscc.makers.9))
+FeaturePlot(hn08.cd45n.sobj, features = c(markers$hnscc.makers.9))
+FeaturePlot(hn17.cd45n.sobj, features = c(markers$hnscc.makers.9))
+FeaturePlot(hn18.cd45n.sobj, features = c(markers$hnscc.makers.9))
+
+# hnscc set of 20 markers
+FeaturePlot(hn01.cd45n.sobj, features = c(markers$hnscc.makers.20))
+FeaturePlot(hn08.cd45n.sobj, features = c(markers$hnscc.makers.20))
+FeaturePlot(hn17.cd45n.sobj, features = c(markers$hnscc.makers.20))
+FeaturePlot(hn18.cd45n.sobj, features = c(markers$hnscc.makers.20))
+
+# CAF markers
+FeaturePlot(hn01.cd45n.sobj, features = c(markers$CAF))
+FeaturePlot(hn08.cd45n.sobj, features = c(markers$CAF))
+FeaturePlot(hn17.cd45n.sobj, features = c(markers$CAF))
+FeaturePlot(hn18.cd45n.sobj, features = c(markers$CAF))
+
+# Endothelial markers
+FeaturePlot(hn01.cd45n.sobj, features = c(markers$Enodthelial))
+FeaturePlot(hn08.cd45n.sobj, features = c(markers$Enodthelial))
+FeaturePlot(hn17.cd45n.sobj, features = c(markers$Enodthelial))
+FeaturePlot(hn18.cd45n.sobj, features = c(markers$Enodthelial))
+
+# Fibroblast markers
+FeaturePlot(hn01.cd45n.sobj, features = c(markers$Fibroblast))
+FeaturePlot(hn08.cd45n.sobj, features = c(markers$Fibroblast))
+FeaturePlot(hn17.cd45n.sobj, features = c(markers$Fibroblast))
+FeaturePlot(hn18.cd45n.sobj, features = c(markers$Fibroblast))
+
+# Pericytes markers
+FeaturePlot(hn01.cd45n.sobj, features = c(markers$Pericytes))
+FeaturePlot(hn08.cd45n.sobj, features = c(markers$Pericytes))
+FeaturePlot(hn17.cd45n.sobj, features = c(markers$Pericytes))
+FeaturePlot(hn18.cd45n.sobj, features = c(markers$Pericytes))
+```
+
+## Color umaps by cell metadata from authors
+```{r color by cell metadata, eval=FALSE}
+library("readxl")
+cell.metadata <- read_excel('cell_metadata.xlsx')
+cell.metadata
+
+sum(colnames(hn01.cd45n.sobj) %in% cell.metadata$index) # 19599
+sum(colnames(hn08.cd45n.sobj) %in% cell.metadata$index) # 5745
+sum(colnames(hn17.cd45n.sobj) %in% cell.metadata$index) # 23621 
+sum(colnames(hn18.cd45n.sobj) %in% cell.metadata$index) # 2947 
+
+# very few cells are in the meta data the provided
+
+t <- cell.metadata %>% filter(index %in% c(colnames(hn01.cd45n.sobj), colnames(hn08.cd45n.sobj),colnames(hn17.cd45n.sobj),colnames(hn18.cd45n.sobj)))
+```
+

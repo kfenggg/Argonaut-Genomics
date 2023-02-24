@@ -1,0 +1,55 @@
+---
+title: "Reading in barcodes after cellranger counts"
+author: "Kevin Feng"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Read in cellranger counts outputs
+```{r read counts}
+# get barcodes for ferris fastq's before aggr
+# patients: 01, 08, 17, 18, cd45np
+library(Seurat)
+library(dplyr)
+library("readxl")
+# load in the meta data from Aditi
+cell.metadata <- read_excel('cell_metadata.xlsx')
+head(cell.metadata$index)
+# get the filtered bc matrix for each SRR
+files <- list.files("../../cellranger_counts", pattern = "filtered_feature_bc_matrix.h5", recursive = TRUE,
+                    full.names = TRUE)
+
+barcodes = c()
+
+for (current.file in files){
+  current.data <- Read10X_h5(current.file)
+  current.sobj <- CreateSeuratObject(counts = current.data, 
+                           min.cells = 5,
+                           min.features = 0)
+  barcodes = c(barcodes, Cells(current.sobj))
+  print(n_distinct(barcodes))
+}
+n_distinct()
+#hn17 <- barcodes
+#hn01 <- barcodes
+n_distinct(c(hn01,hn17))
+
+barcodes = unlist(barcodes)
+length(barcodes)
+head(barcodes)
+
+length(intersect(barcodes, cell.metadata$index))
+sum(unique(barcodes) %in% cell.metadata$index)
+
+n_distinct(cell.metadata$index)
+
+length(colnames(aggr.data))
+n_distinct(colnames(aggr.data))
+```
+
