@@ -1,0 +1,311 @@
+---
+title: "Subsample KIRC"
+author: "Kevin Feng"
+date: '2022-05-27'
+output:
+  html_document:
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Data
+### Load the Data 
+```{r loadData}
+sample.info = readRDS('sample_info.RDS')
+data = readRDS('kirc_824.RDS')
+dim(data)
+data[1:5,1:5]
+head(sample.info)
+```
+
+
+### Subsample for the first 5000 features
+```{r subsample5000}
+data5000 <- data[1:5000,]
+dim(data5000)
+```
+
+
+### Subsample the next 5000 features 
+```{r subsample10000}
+data10000 <- data[5001:10000,]
+dim(data10000)
+```
+
+## First 5000 Features
+### PCA
+```{r pca5000, message=FALSE}
+library(ggplot2)
+library(tidyverse)
+library(factoextra)
+# function to calc pca
+# input: data with features in columns and samples in rows
+# class = class labels for samples
+# returns pca.res, top 10 conctributing features for pc1 and pc1 
+# outputs pca loadings 
+comp.pca <- function(dat, class){
+  pca.res <- prcomp(dat)
+  # print importance of top 10 pc's
+  print(summary(pca.res)$importance[,1:10])
+  # convert pca results to tibble for plotting
+  pca.res.df <- as_tibble(pca.res$x)
+  pc.plot <- ggplot(pca.res.df) + aes(x=PC1, y=PC2, color = sample.info[,2]) + 
+    geom_point(size=1)
+  pc.plot <- pc.plot + labs(fill = "Class")
+  print(pc.plot)
+  # Contributions of variables to PC1
+  print(fviz_contrib(pca.res, choice = "var", axes = 1, top = 10, title = "Contribution of variables to PC1"))
+  # Contributions of variables to PC2
+  print(fviz_contrib(pca.res, choice = "var", axes = 2, top = 10, title = "Contribution of variables to PC2"))
+  
+  return(pca.res)
+}
+
+pca.res <- comp.pca(t(data5000), sample.info[,2])
+```
+
+
+### Boxplots with Scatters
+```{r boxplots5000, message=FALSE}
+library(hrbrthemes)
+library(viridis)
+library(gridExtra)
+library(grid)
+library(ggpubr)
+# plots boxplots with scatters with given data and list of features of interest
+# data must be in form of df with samples in rows and features in columns
+# last column of data is the column to color by
+# pc.name to title plot
+boxplots.scatters <- function(data, feature.list, pc.name){
+  # plot box with scatter of top 10 features 
+  plots = list()
+  plot.order = 1
+  for (feature in feature.list){
+      plots[[plot.order]] <- ggplot(data, aes(x=data[,length(data)], y=data[,feature], fill=data[,length(data)])) +
+      geom_boxplot() +
+      scale_fill_viridis(discrete = TRUE, alpha=0.6) +
+      geom_jitter(color="black", size=0.4, alpha=0.9) +
+      xlab("") +
+      ylab(feature) +
+      theme(legend.position="none", axis.title = element_text(size = 8)) 
+      #assign(paste0('feature.plot.', feature), to.plot)
+      #print(to.plot + guides(fill=guide_legend(title="Class")))
+      plot.order = plot.order + 1
+  }
+  grid.arrange(grobs = plots, nrow=2, top = textGrob(pc.name, gp=gpar(fontsize=10)))
+  #do.call(grid.arrange, c(plots, common.legend=T, nrow=1))
+}
+
+# get features in columns and samples in rows and covert to df
+data5000.df.t <- as.data.frame(t(data5000))
+# add 'tissue' column for normal or tumor classification 
+data5000.df.t$tissue <- sample.info[,2]
+
+## define the feature lists by looking at previous output from fviz_contrib
+# feature.list.pc1 <- c(164, 1292, 1170, 3481, 3312, 3313, 1249, 269, 2775, 1251)
+# feature.list.pc2 <- c(2829, 3374, 1382, 3481, 1636, 920, 1248, 1466, 1170, 993)
+
+# functions to get top 10 contributions for pc
+# input: pca.res from prcomp and data with features in cols and samples in rows
+# input: pc = which pc of interest 
+# input: n_feats = # of features to extract, default = 10
+get.feature.list.pc <- function(pca.res, dat, pc, n.feats = 10){
+  # get pc1 and make it into a dataframe with added row names
+  pca.var.res <- get_pca_var(pca.res)
+  pc.vars <- as.data.frame(cbind(c(1:ncol(dat)), pca.var.res$contrib[,pc]))
+  # set the col names
+  colnames(pc.vars) <- c('names', 'value')
+  
+  # sort by descending value
+  pc.vars.sorted <- pc.vars[order(-pc.vars$value),]
+  return(pc.vars.sorted$names[1:n.feats])
+}
+
+feature.list.pc1 <- get.feature.list.pc(pca.res, t(data5000), 1)
+feature.list.pc2 <- get.feature.list.pc(pca.res, t(data5000), 2)
+
+boxplots.scatters(data5000.df.t, feature.list.pc1, 'PC1 Features')
+boxplots.scatters(data5000.df.t, feature.list.pc2, 'PC2 Features')
+```
+
+## 5001 - 10000 Features
+### PCA
+```{r pca10000}
+# we can call our previously defined function 
+pca.res <- comp.pca(t(data10000), sample.info[,2])
+```
+
+### Boxplots with Scatters
+```{r boxplots10000}
+# get features in columns and samples in rows and covert to df
+data10000.df.t <- as.data.frame(t(data10000))
+# add 'tissue' column for normal or tumor classification 
+data10000.df.t$tissue <- sample.info[,2]
+
+# define the feature lists by looking at previous output from fviz_contrib
+# if we want to relate these features back the original data we can simply add 5000 to each index
+# feature.list.pc1 <- c(3681, 3589, 3683, 4353, 77, 435, 342, 3680, 3685, 3679)
+# feature.list.pc2 <- c(3681, 3675, 3680, 3679, 3689, 3684, 3683, 3677, 3686, 3676)
+
+feature.list.pc1 <- get.feature.list.pc(pca.res, t(data10000), 1)
+feature.list.pc2 <- get.feature.list.pc(pca.res, t(data10000), 2)
+
+boxplots.scatters(data10000.df.t, feature.list.pc1, 'PC1 Features')
+boxplots.scatters(data10000.df.t, feature.list.pc2, 'PC2 Features')
+```
+
+## First 10000 Features
+Now that we took a look at each of these groups of 5000 features separately, let's look at them together.
+
+### Subset first 10000 Features
+```{r data.all.10k}
+data.10k <- data[1:10000,]
+dim(data.10k)
+```
+
+### PCA
+```{r pca10k}
+# we can call our previously defined function 
+pca.res <- comp.pca(t(data.10k), sample.info[,2])
+```
+
+### Boxplots with Scatters
+```{r boxplots10k}
+# get features in columns and samples in rows and covert to df
+data.10k.df.t <- as.data.frame(t(data.10k))
+# add 'tissue' column for normal or tumor classification 
+data.10k.df.t$tissue <- sample.info[,2]
+
+# define the feature lists by looking at previous output from fviz_contrib
+# if we want to relate these features back the original data we can simply add 5000 to each index
+# feature.list.pc1 <- c(3481, 164, 2829, 1292, 3312, 1170, 1249, 9705, 269, 7165)
+# feature.list.pc2 <- c(1170, 164, 3313, 3374, 1191, 2486, 1168, 1249, 8681, 1144)
+
+feature.list.pc1 <- get.feature.list.pc(pca.res, t(data.10k), 1)
+feature.list.pc2 <- get.feature.list.pc(pca.res, t(data.10k), 2)
+
+boxplots.scatters(data.10k.df.t, feature.list.pc1, 'PC1 Features')
+boxplots.scatters(data.10k.df.t, feature.list.pc2, 'PC2 Features')
+```
+
+
+## Filter by Variance
+I used python to compute variance for each feature and filtered down by variance >= 4. This leaves us with 9693 features. 
+
+### Read in our new data
+```{r varFiltered, message=FALSE}
+library(data.table)
+data.var.filtered <- fread('kirc_824_varFiltered_cutoff_4.csv')
+data.var.filtered[1:5,1:5]
+```
+
+### Fix Data
+```{r fixData, message=FALSE}
+# we need to exclude the last column since its featureVariance 
+# we also need to assign the column featureNames as the row index
+# lets set the row names to the featureNames first 
+# convert to dataframe
+df.var.filt <- as.data.frame(data.var.filtered)
+rownames(df.var.filt) <- df.var.filt$featureNames
+# now that we have the featureNames stored as rownames we can remove featureNames and featureVar
+to.drop <- c('featureNames', 'featureVar')
+df.var.filt <- df.var.filt[, !(names(df.var.filt) %in% to.drop)]
+dim(df.var.filt) # 826-2=824 
+```
+
+### PCA
+Now that our data has been fixed so it is the right format, we can perform PCA.
+
+```{r pcaVarFiltered, message=FALSE}
+pca.res <- comp.pca(t(df.var.filt), sample.info[,2])
+```
+The seperation between the rightmost and leftmost clusters is decent. There is some overlap in the middle but let's see how good our top features are. PC1 Looks like it doest a much better job than PC2
+
+
+### Boxplots with Scatters 
+
+```{r varFilteredBoxplots, message=FALSE}
+library(shiny)
+# get features in columns and samples in rows and covert to df
+df.var.filt.t <- as.data.frame(t(df.var.filt))
+# add 'tissue' column for normal or tumor classification 
+df.var.filt.t$tissue <- sample.info[,2]
+
+get.feature.list.pc.var <- function(pca.res, dat, pc, n.feats = 10){
+  # get pc1 and make it into a dataframe with added row names
+  pca.var.res <- get_pca_var(pca.res)
+  pc.vars <- data.frame(names = names(dat)[-1], value = pca.var.res$contrib[,pc])
+  # set the col names
+  # colnames(pc.vars) <- c('names', 'value')
+  
+  # sort by descending value
+  pc.vars.sorted <- pc.vars[order(-pc.vars$value),]
+  return(pc.vars.sorted$names[1:n.feats])
+}
+
+
+# plots boxplots with scatters with given data and list of features of interest
+# data must be in form of df with samples in rows and features in columns
+# last column of data is the column to color by
+# pc.name to title plot
+boxplots.scatters.var <- function(data, feature.list, pc.name){
+  # plot box with scatter of top 10 features 
+  plots = list()
+  plot.order = 1
+  for (feature in feature.list){
+    message(feature, class(feature))
+      plots[[plot.order]] <- ggplot(data, aes(x=data[,length(data)], y=data[,feature], fill=data[,length(data)])) +
+      geom_boxplot() +
+      scale_fill_viridis(discrete = TRUE, alpha=0.6) +
+      geom_jitter(color="black", size=0.4, alpha=0.9) +
+      xlab("") +
+      ylab(feature) +
+      theme(legend.position="none", axis.title = element_text(size = 8)) 
+      #assign(paste0('feature.plot.', feature), to.plot)
+      #print(to.plot + guides(fill=guide_legend(title="Class")))
+      plot.order = plot.order + 1
+  }
+  
+  grid.arrange(grobs = plots, nrow=2, top = textGrob(pc.name, gp=gpar(fontsize=10)))
+  # # for larger plots
+  # output <- grid.arrange(grobs = plots, nrow=10, heights = rep(10,10), top = textGrob(pc.name, gp=gpar(fontsize=10)))
+  # plotOutput(output, height = "5000px")
+
+}
+
+feature.list.pc1 <- get.feature.list.pc.var(pca.res, df.var.filt.t, 1, n.feats = 10)
+feature.list.pc2 <- get.feature.list.pc.var(pca.res, df.var.filt.t, 2, n.feats = 10)
+
+# larger plots only look good in zoom, so we will stick with just the top 10 for rmd output
+boxplots.scatters.var(df.var.filt.t, c('3960896', '3938179'), 'PC1 Features')
+boxplots.scatters.var(df.var.filt.t, feature.list.pc2, 'PC2 Features')
+```
+
+
+### Boxplots with Scatter of top 50 for each PC
+
+
+![PC1 top 50](kirc_varFilt4_pc1_50feats.png)
+
+
+
+![PC2 top 50](kirc_varFilt4_pc2_50feats.png)
+
+## Not used
+```{r featureVariance, message=FALSE}
+library(dplyr)
+library(matrixStats)
+# subset the first 20,000
+data20k <- as.data.frame(data[1:20000,])
+data20k$featureVar <- rowVars(as.matrix(data20k))
+data20k$featureVar[1:10]
+
+# filter by variance
+# only keep rows that have greater variance >= the mean
+data20k.variance.filtered <- data20k %>% filter(featureVar >= mean(featureVar))
+
+dim(data20k.variance.filtered) # 2923 features remaining 
+```

@@ -1,0 +1,563 @@
+---
+title: "Kirc High Variance"
+author: "Kevin Feng"
+date: '2022-06-10'
+output:
+  html_document:
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Data Preparation
+### Load Data, Calculate Variance
+This section only needs to run once. Run just the next section for future work so we do not need to recalculate variance as that takes a lot of time and memory.
+```{r dataPrep, message=FALSE, eval=FALSE}
+library(matrixStats)
+library(data.table)
+
+data = readRDS('kirc_824.RDS') # [1] 4022634     824
+class(data) # this is matrix when we read it in 
+
+# get the following for each feature
+variance <- rowVars(data) # takes a while and needs ~25gb of ram
+rowIndex <- c(1:nrow(data))
+
+# compare variance here to python variance
+data.var.filtered <- fread('kirc_824_varFiltered_cutoff_4.csv')
+dim(data.var.filtered) # [1] 9693  826, 2 extra columns for featureNames and var
+data.var.filtered[data.var.filtered$featureNames == '15939']$featureVar == variance[15939]
+
+max(variance) # this looks the same as the python output
+sum(variance >= 4) # this also gives the same number as python
+
+# test on small subset to see if constructing a df works
+test <- as.data.frame(data[1:5, 1:5])
+test$idx <- rowIndex[1:5]
+test$var <- variance[1:5]
+test # works!
+
+# construct whole df
+data.df <- as.data.frame(data)
+data.df$idx <- rowIndex
+data.df$var <- variance
+dim(data.df) # [1] 4022634     826
+data.df[1:5, 820:826]
+
+# load sample info
+sample.info = readRDS('sample_info.RDS')
+
+# write to RDS
+saveRDS(data.df, file = 'kirc824_variance_idx.RDS')
+```
+
+
+### Save Compute Time
+```{r saveTime, message=FALSE}
+library(matrixStats)
+library(data.table)
+data <- readRDS('kirc824_variance_idx.RDS')
+data.df <- as.data.frame(data)
+
+# load sample info
+sample.info = readRDS('sample_info.RDS')
+```
+
+
+### Subset for High Variance Features
+```{r high.var.subset, message=FALSE}
+library(dplyr)
+data.df.filtered <- data.df %>% filter(var >= 4) 
+dim(data.df.filtered) # [1] 9693  826
+data.df.filtered[1:5, 820:826] # last 2 columns should not be used in pca
+
+# set rownames of the df to idx
+rownames(data.df.filtered) <- data.df.filtered$idx
+```
+
+
+## Analysis
+### Boxplots with Scatters Function and Data Prep
+```{r boxplots.w.scatters, message=FALSE}
+library(hrbrthemes)
+library(viridis)
+library(gridExtra)
+library(grid)
+library(ggpubr)
+library(shiny)
+library(ggplot2)
+library(tidyverse)
+library(factoextra)
+
+# plots boxplots with scatters with given data and list of features of interest
+# data must be in form of df samples columns + idx column, features in rows
+# class.lables = class labels for samples
+# pc.name to title plot
+plot.boxplots.scatters <- function(data, feature.list, class.labels, plot.name, n.row=2){
+  # subset for only data features of interest
+  data <- data %>% filter(idx %in% as.character(feature.list))
+  # set row names, drop idx
+  rownames(data) <- data$idx
+  data <- data %>% select(-idx)
+  
+  # transpose, must cast as dataframe to add class
+  data <- as.data.frame(t(data))
+  
+  # add class labels as column
+  data$class <- class.labels
+  
+  # melt and plot
+  data.m <- melt(data, id.vars = 'class')
+  ggplot(data.m, aes(class, value, fill=class), alpha=0.5) + geom_boxplot(outlier.shape = NA) + scale_fill_brewer(palette="Pastel2") + theme_minimal() + theme(axis.text.x=element_blank()) +
+      geom_jitter(color="black", size=0.3, alpha=0.5) + facet_wrap(~variable, nrow=n.row) + ggtitle(plot.name)
+}
+
+
+
+# drop var column
+data.df.filtered.no.var <- data.df.filtered %>% select(-var)
+```
+
+
+## Normal Vs Tumor Comparisons
+### Split the Data
+```{r dataSplit, message=FALSE}
+# we need to start with the filtered dataset, append sample info, then select
+# remove var and idx
+data.df.filtered.new <- select(data.df.filtered, -c(idx,var)) 
+
+# set class info to a var called class
+class <- sample.info[,2]
+
+# subset for normal samples
+normal.df <- data.df.filtered.new[, class == 'normal']
+
+# subset for tumor samples
+tumor.df <- data.df.filtered.new[, class == 'tumor']
+
+# check to make sure they're the right size
+dim(normal.df) # [1] 9693  289, loses idx so we need to add it back in 
+sum(class == 'normal') # 289
+
+# repeat for tumor
+dim(tumor.df) # [1] 9693  536, contains idx
+sum(class == 'tumor') # [1] 535
+
+
+# check a random sample from each
+all(normal.df$subj_111_normal == data.df.filtered$subj_111_normal)
+all(tumor.df$subj_111_tumor == data.df.filtered$subj_111_tumor)
+
+# check that idx's aka feature names are the same for both dataframes
+all(rownames(normal.df) == rownames(tumor.df))
+```
+
+
+### Calculate Quantiles
+```{r quantileCalc, message=FALSE}
+# calc normal tissue quantiles
+normal.q5 <- rowQuantiles(as.matrix(normal.df), probs = 0.05)
+normal.q50 <- rowQuantiles(as.matrix(normal.df), probs = 0.50)
+normal.q95 <- rowQuantiles(as.matrix(normal.df), probs = 0.95)
+
+# calc tumor quantiles
+tumor.q5 <- rowQuantiles(as.matrix(tumor.df), probs = 0.05)
+tumor.q50 <- rowQuantiles(as.matrix(tumor.df), probs = 0.50)
+tumor.q95 <- rowQuantiles(as.matrix(tumor.df), probs = 0.95)
+
+# instances where the tumor q5 is greater than the normal q95
+sum(tumor.q5>normal.q95)
+
+## To do: subset both df's for these features and plot
+```
+
+
+### Subset the split DFs
+```{r subsetSplit, message=FALSE}
+# append quantiles as columns to each df
+# normal
+normal.df$q5 <- normal.q5
+normal.df$q50 <- normal.q50
+normal.df$q95 <- normal.q95
+
+# tumor
+tumor.df$q5 <- tumor.q5
+tumor.df$q50 <- tumor.q50
+tumor.df$q95 <- tumor.q95
+
+# add idx back in since the rows have not been messed with they'll stay in order
+# we need this because dplyr::filter does not retain rownames
+normal.df$idx <- data.df.filtered$idx
+tumor.df$idx <- data.df.filtered$idx
+
+tumor.q5.normal.q95 <- tumor.df %>% filter(q5 > normal.df$q95)
+
+# save list of features of interest as a variable
+big.spread.features <- tumor.q5.normal.q95$idx
+```
+
+
+### Boxplots with Scatters T q5 > N q95
+```{r tumorq5.normalq95.boxplots.w.scatters, message=FALSE, fig.height=7}
+# below: previous code to plot, replaced with function in above section
+# # subset high var df for tumor q5 > q95 features
+# subset.tq5.nq95 <- data.df.filtered %>% filter(idx %in% as.character(big.spread.features))
+# 
+# # drop the var column
+# subset.tq5.nq95 <- subset.tq5.nq95 %>% select(-var)
+# 
+# # set row names, drop idx
+# rownames(subset.tq5.nq95) <- subset.tq5.nq95$idx
+# subset.tq5.nq95 <- subset.tq5.nq95 %>% select(-idx)
+# 
+# # transpose, must cast as dataframe to add class
+# subset.tq5.nq95.t <- as.data.frame(t(subset.tq5.nq95))
+# 
+# # add class labels 
+# subset.tq5.nq95.t$class <- class
+# 
+# # melt
+# subset.tq5.nq95.t.m <- melt(subset.tq5.nq95.t, id.vars = 'class')
+# 
+# # plot
+# ggplot(subset.tq5.nq95.t.m, aes(class, value, fill=class)) + geom_boxplot() + scale_fill_viridis(discrete = TRUE, alpha=0.6) +
+#       geom_jitter(color="black", size=0.2, alpha=0.9) + facet_wrap(~variable, nrow=2)
+
+plot.boxplots.scatters(data.df.filtered.no.var, big.spread.features, sample.info[,2], 'Features Tumor q5 > Normal q95', 4)
+```
+
+
+### Check Different Cutoffs
+```{r diffCutoffs, message=FALSE}
+# vary cutoffs and see how many features we get
+# need to exclude the last 4 columns in both dfs are the are q5, q50, q95, and idx
+for (q in seq(0.01, 0.1, 0.01)){
+  normal.q <- rowQuantiles(as.matrix(normal.df[, 1:(ncol(normal.df)-4)]), probs = 1-q)
+
+  tumor.q <- rowQuantiles(as.matrix(tumor.df[, 1:(ncol(tumor.df)-4)]), probs = 0+q)
+  
+  cat('Tumor q', 0+q, '> Normal q', 1-q, ':', sum(tumor.q>normal.q), '\n')
+}
+  
+```
+
+### Tumor q6 > Normal q94 Box Plot 
+```{r tumorq6.normalq94, message=FALSE, fig.height=8}
+# calc tumor q6
+normal.q94 <- rowQuantiles(as.matrix(normal.df[, 1:(ncol(normal.df)-4)]), probs = 0.94)
+
+tumor.q6 <- rowQuantiles(as.matrix(tumor.df[, 1:(ncol(tumor.df)-4)]), probs = 0.06)
+
+tumor.q6.normal.q94 <- tumor.df %>% filter(tumor.q6 > normal.q94)
+
+# save list of features of interest as a variable
+q6.q94.features <- tumor.q6.normal.q94$idx
+
+# plot
+plot.boxplots.scatters(data.df.filtered.no.var, q6.q94.features, sample.info[,2], 'Features Tumor q4 > Normal q94', 7)
+```
+
+
+### Tumor q10 > Normal q90 Box Plot
+```{r tumorq10.normalq90, message=FALSE, fig.height=15}
+# calc tumor q6
+normal.q90 <- rowQuantiles(as.matrix(normal.df[, 1:(ncol(normal.df)-4)]), probs = 0.90)
+
+tumor.q10 <- rowQuantiles(as.matrix(tumor.df[, 1:(ncol(tumor.df)-4)]), probs = 0.10)
+
+tumor.q10.normal.q90 <- tumor.df %>% filter(tumor.q10 > normal.q90)
+
+# save list of features of interest as a variable
+q10.q90.features <- tumor.q10.normal.q90$idx
+
+# plot
+plot.boxplots.scatters(data.df.filtered.no.var, q10.q90.features, sample.info[,2], 'Features Tumor q10 > Normal q90', 14)
+```
+
+
+## Further Filtering 
+### Variance difference > 1
+
+We will start with the 129 t q10 > n q90 features and try to filter that down to 30-40.
+```{r varDiff1, message=FALSE, fig.height=10}
+# subset whole data for the 129 features 
+data.df.tq10.nq90 <- data.df.filtered.no.var %>% filter(idx %in% q10.q90.features)
+
+# mean difference between feature expression for the 2 groups
+mean(tumor.q10[names(tumor.q10) %in% q10.q90.features] - normal.q90[names(normal.q90) %in% q10.q90.features])
+
+diff.var.1.features <- q10.q90.features[(tumor.q10[names(tumor.q10) %in% q10.q90.features] - normal.q90[names(normal.q90) %in% q10.q90.features]) > 1]
+
+plot.boxplots.scatters(data.df.filtered.no.var, diff.var.1.features, sample.info[,2], 'Var diff > 1', 6)
+```
+
+
+### Tumor 'min' > Normal 'max'
+```{r iqr.min.max, message=FALSE, fig.height=10}
+# we want tumor 'min' = Q1(25th) - 1.5*IQR > normal 'max' = Q5(75th) + 1.5*IQR
+# subset tumor and normal df's for the 129 features so we can compute
+tumor.df.129 <- tumor.df %>% filter(idx %in% q10.q90.features)
+normal.df.129 <- normal.df %>% filter(idx %in% q10.q90.features)
+
+# compute iqr for each row
+tumor.df.129$iqr <- rowIQRs(as.matrix(tumor.df.129[,1:(ncol(tumor.df.129)-4)]))
+normal.df.129$iqr <- rowIQRs(as.matrix(normal.df.129[,1:(ncol(normal.df.129)-4)]))
+
+# we can play around with the quantile used for each
+# calc min for tumor 
+# can lower probs to make this more stringent 
+tumor.df.129$min <- rowQuantiles(as.matrix(tumor.df.129[, 1:(ncol(tumor.df.129)-5)]), probs = 0.25) - (1.5*tumor.df.129$iqr) 
+
+# calc max for normal
+# can raise probs to make this more stringent 
+normal.df.129$max <- rowQuantiles(as.matrix(normal.df.129[, 1:(ncol(normal.df.129)-5)]), probs = 0.75) + (1.5*normal.df.129$iqr) 
+
+# how many features do we have that meet the criteria
+sum(tumor.df.129$min > normal.df.129$max) # 22
+
+plot.boxplots.scatters(data.df.filtered.no.var, tumor.df.129[tumor.df.129$min > normal.df.129$max,]$idx, sample.info[,2], 
+                       'T q10 > N q90 + T \'min\' > N \'max\'', 3)
+```
+
+
+### Min/max All High Variance Features (9693)
+```{r moreFiltering2, message=FALSE, fig.height=12}
+tumor.df.iqr <- tumor.df
+normal.df.iqr <- normal.df
+
+# compute iqr for each row
+tumor.df.iqr$iqr <- rowIQRs(as.matrix(tumor.df[,1:(ncol(tumor.df)-4)]))
+normal.df.iqr$iqr <- rowIQRs(as.matrix(normal.df[,1:(ncol(normal.df)-4)]))
+
+# we can play around with the quantile used for each
+# calc min for tumor 
+# can lower probs to make this more stringent 
+tumor.df.iqr$min <- rowQuantiles(as.matrix(tumor.df.iqr[, 1:(ncol(tumor.df.iqr)-5)]), probs = 0.25) - (1.5*tumor.df.iqr$iqr) 
+
+# calc max for normal
+# can raise probs to make this more stringent 
+normal.df.iqr$max <- rowQuantiles(as.matrix(normal.df.iqr[, 1:(ncol(normal.df.iqr)-5)]), probs = 0.75) + (1.5*normal.df.iqr$iqr) 
+
+# how many features do we have that meet the criteria
+sum(tumor.df.iqr$min > normal.df.iqr$max) # 22
+
+plot.boxplots.scatters(data.df.filtered.no.var, tumor.df.iqr[tumor.df.iqr$min > normal.df.iqr$max,]$idx, sample.info[,2], 
+                       'T \'min\' > N \'max\'', 4)
+```
+
+In the above plot there are more outliers that dip into the distribution of the other class. I believe this t min > n max works better in conjunction with t q10 > n q90, than by itself. 
+
+We can try having an outlier limit of 10%.
+
+### Outlier Limit
+```{r outlierCutoff, message=FALSE, fig.height=10}
+
+# tumor.df.iqr['2430535', (ncol(tumor.df.iqr)-5):ncol(tumor.df.iqr)]
+
+# outlier = value < iqr min 
+# count number of outliers for each feature
+n.outliers.tumor <- list()
+for (i in 1:nrow(tumor.df.iqr)){
+  this.outliers <- sum(tumor.df.iqr[i, 1:(ncol(tumor.df.iqr)-6)] < tumor.df.iqr$min)
+  n.outliers.tumor <- c(n.outliers.tumor, this.outliers)
+}
+
+# outlier = value > iqr max
+# count number of outliers for each feature
+n.outliers.normal <- list()
+for (i in 1:nrow(normal.df.iqr)){
+  this.outliers <- sum(normal.df.iqr[i, 1:(ncol(normal.df.iqr)-6)] > normal.df.iqr$max)
+  n.outliers.normal <- c(n.outliers.normal, this.outliers)
+}
+
+# add to data frame
+tumor.df.iqr$n.outliers <- unlist(n.outliers.tumor, recursive=FALSE)
+
+normal.df.iqr$n.outliers <- unlist(n.outliers.normal, recursive=FALSE)
+
+# check to make sure everything looks right, we can use Feature 2430535 since we already counted those outliers
+tumor.df.iqr[1:5, (ncol(tumor.df.iqr)-5):ncol(tumor.df.iqr)]
+tumor.df.iqr['2430535', (ncol(tumor.df.iqr)-5):ncol(tumor.df.iqr)]
+
+
+# set cutoffs, lets use 50 for tumors and 20 for normal (approx. 10%)
+tumor.df.outlier.filter <- tumor.df.iqr %>% filter(n.outliers <= 50)
+
+normal.df.outlier.filter <- normal.df.iqr %>% filter(n.outliers <= 20)
+
+# now we need to get overlapping idx's from each df
+outlier.filter.feature.list <- intersect(tumor.df.outlier.filter$idx, normal.df.outlier.filter$idx) 
+length(outlier.filter.feature.list) # 120 features that meet this condition
+
+# lets see how many also meet t q10 > n q90
+intersect(outlier.filter.feature.list, q10.q90.features)
+
+# try plotting these
+plot.boxplots.scatters(data.df.filtered.no.var, intersect(outlier.filter.feature.list, q10.q90.features), sample.info[,2],
+                       't q10 > n q90 + low outliers', 4)
+```
+
+### Limit outliers with stronger cutoffs
+```{r outliers.q25.q75, message=FALSE, fig.height=10}
+# read in the tumor and normal df's
+tumor.df.q25 <- tumor.df
+normal.df.q75 <- normal.df
+
+# calculate respective quantiles for each df 
+tumor.df.q25$q25 <- rowQuantiles(as.matrix(tumor.df.q25), probs = 0.25)
+normal.df.q75$q75 <- rowQuantiles(as.matrix(normal.df.q75), probs = 0.75)
+
+# outlier = value < q25
+# count number of outliers for each feature
+n.outliers.tumor <- list()
+for (i in 1:nrow(tumor.df.q25)){
+  this.outliers <- sum(tumor.df.q25[i, 1:(ncol(tumor.df.q25)-5)] <= tumor.df.q25$q25)
+  n.outliers.tumor <- c(n.outliers.tumor, this.outliers)
+}
+
+# outlier = value > q75
+# count number of outliers for each feature
+n.outliers.normal <- list()
+for (i in 1:nrow(normal.df.q75)){
+  this.outliers <- sum(normal.df.q75[i, 1:(ncol(normal.df.q75)-5)] >= normal.df.q75$q75)
+  n.outliers.normal <- c(n.outliers.normal, this.outliers)
+}
+
+# add to data frame
+tumor.df.q25$n.outliers <- unlist(n.outliers.tumor, recursive=FALSE)
+
+normal.df.q75$n.outliers <- unlist(n.outliers.normal, recursive=FALSE)
+
+# set cutoffs, lets use 60 for tumors and 30 for normal (approx. 10%)
+tumor.df.outlier.filter <- tumor.df.q25 %>% filter(n.outliers <= 75) # 535 tumor samples
+
+normal.df.outlier.filter <- normal.df.q75 %>% filter(n.outliers <= 60) # 289 normal samples
+
+# now we need to get overlapping idx's from each df
+outlier.filter.feature.list <- intersect(tumor.df.outlier.filter$idx, normal.df.outlier.filter$idx) 
+length(outlier.filter.feature.list) # 10 features that meet this condition
+
+# plot feature that meet the condition 
+plot.boxplots.scatters(data.df.filtered.no.var, outlier.filter.feature.list, sample.info[,2],
+                       't q25, n q75 outlier limits', 1)
+
+
+# number of features that meet the above condition and have t iqr min > n iqr max
+length(intersect(outlier.filter.feature.list, tumor.df.iqr[tumor.df.iqr$min > normal.df.iqr$max,]$idx))
+
+# plot features that meet both conditions 
+plot.boxplots.scatters(data.df.filtered.no.var, 
+                       intersect(outlier.filter.feature.list, tumor.df.iqr[tumor.df.iqr$min > normal.df.iqr$max,]$idx), 
+                       sample.info[,2],
+                       't q25, n q75 outlier limits + t iqr min > n iqr max', n.row = 1)
+```
+
+### Original Dataset var > 3 cutoff
+```{r anotherTest, message=FALSE, fig.height=10}
+# subset original data with a lower variance threshold
+data.df.var3 <- data.df %>% filter(var > 3)
+
+# subset for normal samples
+normal.df.var3 <- data.df.var3[, class == 'normal']
+
+# subset for tumor samples
+tumor.df.var3 <- data.df.var3[, class == 'tumor']
+
+# t min iqr > n max iqr
+# compute iqr for each row
+tumor.df.var3$iqr <- rowIQRs(as.matrix(tumor.df.var3[,1:(ncol(tumor.df.var3)-2)]))
+normal.df.var3$iqr <- rowIQRs(as.matrix(normal.df.var3[,1:(ncol(normal.df.var3)-2)]))
+
+# we can play around with the quantile used for each
+# calc min for tumor 
+# can lower probs to make this more stringent 
+tumor.df.var3$min <- rowQuantiles(as.matrix(tumor.df.var3[, 1:(ncol(tumor.df.var3)-3)]), probs = 0.25) - (1.5*tumor.df.var3$iqr) 
+
+# calc max for normal
+# can raise probs to make this more stringent 
+normal.df.var3$max <- rowQuantiles(as.matrix(normal.df.var3[, 1:(ncol(normal.df.var3)-3)]), probs = 0.75) + (1.5*normal.df.var3$iqr) 
+
+sum(tumor.df.var3$min > normal.df.var3$max) # 38 features
+
+# save idx that meet pass the iqr min max cutoff 
+iqr.cutoff.idx <- tumor.df.var3$idx[tumor.df.var3$min > normal.df.var3$max] 
+
+# drop var column for boxplots
+data.df.var3.to.plot <- data.df.var3%>% select(-var)
+
+plot.boxplots.scatters(data.df.var3.to.plot, iqr.cutoff.idx, class, 'Var > 3, T iqr min > N iqr max', n.row = 4)
+
+# compute outliers 
+out <- sapply(tumor.df.var3, function(x) x <= quantile(x, 0.25))
+tumor.df.var3$outlier_count <- rowSums(out)
+
+out <- sapply(normal.df.var3, function(x) x >= quantile(x, 0.75))
+normal.df.var3$outlier_count <- rowSums(out)
+
+# make sure all idx are still order
+all(tumor.df.var3$idx == normal.df.var3$idx)
+
+# sum of outliers, we only care about lows in tumors and highs in norms 
+sum.of.outliers = normal.df.var3$outlier_count + tumor.df.var3$outlier_count
+
+# set var for idx
+idx <- tumor.df.var3$idx
+
+# makea df with idx and sum of outlierss
+idx.outlier.df <- as.data.frame(cbind(idx, sum.of.outliers))
+
+# sort by sum of outliers
+idx.outlier.df.sorted <- idx.outlier.df[order(sum.of.outliers),]
+
+intersect(idx.outlier.df.sorted$idx, iqr.cutoff.idx) # intersect returns in order of the first input
+
+# filter for the 38 idx's of interest 
+idx.outliers.filtered <- idx.outlier.df.sorted %>% filter(idx %in% iqr.cutoff.idx)
+idx.outliers.filtered
+# drop the last 8 to get 30 features
+head(idx.outliers.filtered$idx, -6)
+
+plot.boxplots.scatters(data.df.var3.to.plot, head(idx.outliers.filtered$idx, -8), class, 'Var > 3, T iqr min > N iqr max, low outliers', n.row = 4)
+```
+
+
+## Check Feature for Outliers
+### Feature 2430535
+```{r checkFeature.2430535}
+# checking outliers for feature 2430535
+test <- (data.df.filtered.no.var['2430535',1:(ncol(data.df.filtered.no.var)-1)])
+
+# split for class
+t.t <- test[, (sample.info[,2]=='tumor')]
+t.n <- test[, (sample.info[,2]=='normal')]
+
+# plot distributions 
+hist(t(t.t), main = 'Tumor Distribution of Feature 2430535', xlab = 'Expression', breaks = 20)
+
+hist(t(t.n), main = 'Normal Distribution of Feature 2430535', xlab = 'Expression', breaks = 20)
+
+# check how many tumor samples above 2
+sum(t.t > 2) # 124
+dim(t.t) # 535
+
+# ~124 of the 535 samples could be considered outliers 
+```
+
+
+
+### Make Text File 
+Contains feature name, T qX and N qY
+```{r makeFile, message=FALSE, eval=FALSE}
+txtfile <- as.data.frame(cbind(data.df.filtered$idx, tumor.q10, normal.q90))
+txtfile.filt <- txtfile[txtfile$tumor.q10>txtfile$normal.q90,]
+colnames(txtfile.filt)[1] <- 'featureIdx'
+all(txtfile.filt$featureIdx == (tumor.q10.normal.q90$idx))
+
+write.table(txtfile.filt, file = 'tumorq10_greaterThan_normalq90.txt', sep = ' ', row.names = FALSE)
+```
+
+
+
+
