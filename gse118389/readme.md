@@ -1,3 +1,2 @@
 ## Analysis of GSE118389
-Alignment with star
-Quantification with feature counts
+Alignment with star, quantification with feature counts
