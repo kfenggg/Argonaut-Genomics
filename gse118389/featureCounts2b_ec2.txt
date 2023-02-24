@@ -1,0 +1,34 @@
+library(dplyr)
+library(Rsubread)
+library(stringr)
+
+
+bam.files <- list.files(path = '/home/ubuntu/star_align_gse118389/', pattern = '.bam', include.dirs = TRUE, all.files = TRUE, full.names=TRUE)
+
+names <- list.files(path = '/home/ubuntu/star_align_gse118389/', pattern = '.bam', ignore.case = TRUE)
+
+new.bam.names <- c()
+for (bam in names){
+  x <- gsub(bam, pattern='^.*(PT)(.*)(_Aligned.out.bam)$', replace='\\2')
+  y <- str_extract(x, "[^_]+" )
+  if (nchar(y) > 2){
+    new.bam.names <- c(new.bam.names, paste0("/home/ubuntu/gse118389_featureCounts/2b/","PT", x, ".rds"))
+  }
+  else{
+    new.bam.names <- c(new.bam.names, paste0("/home/ubuntu/gse118389_featureCounts/2b/", "PT0", x, ".rds"))
+  }
+  
+}
+
+
+for (idx in 1:length(bam.files)){
+	this.counts <- featureCounts(bam.files[idx], annot.ext = '/home/ubuntu/featureCounts_gse118389_old/GRCh38_Ensembl_rmsk_TE.gtf', isGTFAnnotationFile = TRUE,
+                        GTF.attrType = "transcript_id", 
+                        ignoreDup = TRUE, 
+                        nthreads = 12,
+                        isPairedEnd = TRUE,
+				primaryOnly = TRUE,
+				countMultiMappingReads=TRUE,
+                        tmpDir = '/home/ubuntu/gse118389_featureCounts/2b/tmp/')
+	saveRDS(this.counts, file = new.bam.names[idx])
+}

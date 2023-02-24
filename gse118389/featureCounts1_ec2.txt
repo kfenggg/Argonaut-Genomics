@@ -1,0 +1,32 @@
+library(dplyr)
+library(Rsubread)
+library(stringr)
+
+
+bam.files <- list.files(path = '/home/ubuntu/star_align_gse118389/', pattern = '.bam', include.dirs = TRUE, all.files = TRUE, full.names=TRUE)
+
+names <- list.files(path = '/home/ubuntu/star_align_gse118389/', pattern = '.bam', ignore.case = TRUE)
+
+new.bam.names <- c()
+for (bam in names){
+  x <- gsub(bam, pattern='^.*(PT)(.*)(_Aligned.out.bam)$', replace='\\2')
+  y <- str_extract(x, "[^_]+" )
+  if (nchar(y) > 2){
+    new.bam.names <- c(new.bam.names, paste0("/home/ubuntu/gse118389_featureCounts/1/","PT", x, ".rds"))
+  }
+  else{
+    new.bam.names <- c(new.bam.names, paste0("/home/ubuntu/gse118389_featureCounts/1/", "PT0", x, ".rds"))
+  }
+  
+}
+
+
+for (idx in 1:length(bam.files)){
+	this.counts <- featureCounts(bam.files[idx], annot.ext = '/home/ubuntu/Homo_sapiens.GRCh38.107.gtf', isGTFAnnotationFile = TRUE,
+                        GTF.attrType = "gene_id", 
+                        ignoreDup = TRUE, 
+                        nthreads = 12,
+                        isPairedEnd = TRUE,
+                        tmpDir = '/home/ubuntu/gse118389_featureCounts/1/tmp/')
+	saveRDS(this.counts, file = new.bam.names[idx])
+}
