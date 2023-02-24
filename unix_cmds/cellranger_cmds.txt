@@ -1,0 +1,60 @@
+# export cell ranger to path 
+export PATH=/home/ubuntu/yard/apps/cellranger-7.0.0:$PATH
+export PATH='pwd of what you want':$PATH
+
+# run cellranger count on /scdata/SRR16213611/T5_1_S1_L001_R*_001.fastq 
+# move the reads so they are in the same folder for easy running
+mv T5_1_S1_L001_R* ~/yard/run_cellranger_count
+
+# run cellranger count
+cellranger count --id=run_count_T5_1_TE_comb_filtered \
+--fastqs=sample_fastqs \
+--sample=T5_1 \
+--transcriptome=TE.ensemble.combined.filtered.genome 
+
+# run cellranger aggr cd45n, running now
+# hn01
+cellranger aggr --id=HN01_CD45n --csv=/home/ubuntu/ferris2021/run_cellranger_aggr/csvs/hn01_cd45n_aggr.csv
+
+# hn08
+cellranger aggr --id=HN08_CD45n --csv=/home/ubuntu/ferris2021/run_cellranger_aggr/csvs/hn08_cd45n_aggr.csv
+
+# hn17
+cellranger aggr --id=HN17_CD45n --csv=/home/ubuntu/ferris2021/run_cellranger_aggr/csvs/hn17_cd45n_aggr.csv
+
+# hn18
+cellranger aggr --id=HN18_CD45n --csv=/home/ubuntu/ferris2021/run_cellranger_aggr/csvs/hn18_cd45n_aggr.csv
+
+##############################
+##############################
+##############################
+
+# run cellranger aggr cd45p
+# hn01
+cellranger aggr --id=HN01_CD45p --csv=/home/ubuntu/ferris2021/run_cellranger_aggr/csvs/hn01_cd45p_aggr.csv
+
+# hn08
+cellranger aggr --id=HN08_CD45p --csv=/home/ubuntu/ferris2021/run_cellranger_aggr/csvs/hn08_cd45p_aggr.csv
+
+# hn17
+cellranger aggr --id=HN17_CD45p --csv=/home/ubuntu/ferris2021/run_cellranger_aggr/csvs/hn17_cd45p_aggr.csv
+
+# hn18
+cellranger aggr --id=HN18_CD45p --csv=/home/ubuntu/ferris2021/run_cellranger_aggr/csvs/hn18_cd45p_aggr.csv
+
+#### aggr with above 4 patients both cd45
+cellranger aggr --id=HN01_08_17_18_CD45np --csv=/home/ubuntu/ferris2021/run_cellranger_aggr/csvs/hn01_08_17_18_cd45np_aggr.csv
+
+### moved all hn01 cd45n fastqs into 1 folder so the SRR folders are empty
+### run cellranger counts with all the HN01 cd45n fastq's 
+cellranger count --id=HN01_CD45n_all --fastqs=/home/ubuntu/ferris2021/data/hn01_cd45n --transcriptome=/home/ubuntu/yard/run_cellranger_count/TE.ensemble.combined.filtered.genome --localcores=24 --localmem=100
+
+
+# same but with cd45p 
+cellranger count --id=HN01_CD45p_all --fastqs=/home/ubuntu/ferris2021/data/hn01_cd45p --transcriptome=/home/ubuntu/yard/run_cellranger_count/TE.ensemble.combined.filtered.genome --localcores=16 --localmem=64
+
+# hn17 cd45n 
+cellranger count --id=HN17_CD45n_all --fastqs=/home/ubuntu/ferris2021/data/hn17_cd45n --transcriptome=/home/ubuntu/yard/run_cellranger_count/TE.ensemble.combined.filtered.genome --localcores=24 --localmem=100
+
+# new cellranger aggr with all HN and cd45np
+cellranger aggr --id=HNall_CD45np --csv=/home/ubuntu/ferris2021/run_cellranger_aggr/HN_all_cd45np.csv

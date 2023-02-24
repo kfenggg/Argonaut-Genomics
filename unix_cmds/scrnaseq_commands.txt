@@ -1,0 +1,30 @@
+# download hg38 to through command line, only need primary 
+wget -r ftp://ftp.ensembl.org/pub/release-106/fasta/homo_sapiens/dna/
+# use this instead
+wget ftp://ftp.ensembl.org/pub/release-106/fasta/homo_sapiens/dna/Homo_sapiens.GRCh38.dna.primary_assembly.fa.gz 
+
+# download annotation gtf
+wget ftp://ftp.ensembl.org/pub/release-106/gtf/homo_sapiens/Homo_sapiens.GRCh38.106.gtf.gz
+
+# unzip gtf and fasta
+gzip -d [file.gz]
+
+# star create index
+STAR --runThreadN 16 --runMode genomeGenerate --genomeDir genome --genomeFastaFiles dna_fasta/Homo_sapiens.GRCh38.dna_sm.primary_assembly.fa --sjdbGTFfile Homo_sapiens.GRCh38.106.gtf --sjdbOverhang 100 --genomeSAsparseD 3
+
+# saves compute 
+--genomeChrBinNbits 24
+
+
+grep "^>" dna_fasta/Homo_sapiens.GRCh38.dna_sm.primary_assembly.fa | wc -l
+
+# try alignment 
+STAR --quantMode GeneCounts --twopassMode Basic --alignSJDBoverhangMin 1 --bamRemoveDuplicatesType UniqueIdentical --winAnchorMultimapNmax 1000 --outFilterMultimapNmax 1000 --outFilterScoreMinOverLread 0.33, --outFilterMatchNminOverLread 0.33 --outFilterMismatchNoverLmax 0.04 --outMultimapperOrder Random --genomeDir /hg38/genome --readFilesIn SRR16213611/T5_1_S1_L001_R1_001.fastq SRR16213611/T5_1_S1_L001_R2_001.fastq
+
+############### SMART SEQ 2 ###############
+# star create index w/ expanded gtf
+STAR --runThreadN 24 --runMode genomeGenerate --genomeDir genome --genomeFastaFiles ~/yard/run_cellranger_count/Homo_sapiens.GRCh38.dna.primary_assembly.fa --sjdbGTFfile ~/yard/run_cellranger_count/TE_ensembl_combined_numchrs_only_filtered.gtf --sjdbOverhang 100 --genomeSAsparseD 3
+
+
+# alignment for smartseq2 bash script SPECIFY output DIR
+STAR --quantMode GeneCounts --twopassMode Basic --alignSJDBoverhangMin 1 --bamRemoveDuplicatesType UniqueIdentical --winAnchorMultimapNmax 1000 --outFilterMultimapNmax 1000 --outFilterScoreMinOverLread 0.33, --outFilterMatchNminOverLread 0.33 --outFilterMismatchNoverLmax 0.04 --outMultimapperOrder Random --genomeDir ~/expanded_hg38/ --readFilesIn ${f1} ${f2} --outFileNamePrefix ./"${srrname}_expanded" --outSAMtype BAM Unsorted

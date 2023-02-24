@@ -1,0 +1,22 @@
+featureCounts
+
+1)
+featureCounts -a featureCounts/Homo_sapiens.GRCh38.106.gtf -o featureCounts/featureCounts_1 star_align/Aligned.sortedByCoord.out.bam -T 16 -p --ignoreDup -g gene_id
+
+2a)
+featureCounts -a featureCounts/GRCh38_Ensembl_rmsk_TE.gtf -o featureCounts/featureCounts_2a star_align/Aligned.sortedByCoord.out.bam -T 16 -p --ignoreDup -g transcript_id 
+
+2b)
+featureCounts -a featureCounts/GRCh38_Ensembl_rmsk_TE.gtf -o featureCounts/featureCounts_2b star_align/Aligned.sortedByCoord.out.bam -T 16 -p --ignoreDup -g transcript_id -M --primary
+
+3)
+featureCounts -a featureCounts/GRCh38_Ensembl_rmsk_TE.gtf -o featureCounts/featureCounts_3 star_align/Aligned.sortedByCoord.out.bam -T 16 -p --ignoreDup -g gene_id -M --primary
+
+
+
+#!/bin/bash
+for bam in ~/star_align_gse118389/*.bam; do
+ output_name=$(basename -- ${bam})
+ output_name=${output_name%%.bam*}
+ featureCounts -T 32 -p --countReadPairs --ignoreDup -g transcript_id -a ~/featureCounts_gse118389/GRCh38_Ensembl_rmsk_TE.gtf -o ./2a/${output_name} ${bam}
+done

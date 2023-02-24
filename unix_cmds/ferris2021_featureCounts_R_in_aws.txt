@@ -1,0 +1,21 @@
+library(Rsubread)
+library(stringr)
+library(dplyr)
+files <- list.files(".", pattern = "possorted_genome_bam.bam", recursive = TRUE,
+                    full.names = TRUE)
+
+files <- files[c(TRUE,FALSE)]
+
+file.names <- str_sub(files, 3, 12)
+
+for (idx in 1:length(files)){
+	this.counts <- featureCounts(files[idx], 
+                               annot.ext = '/home/ubuntu/featureCounts_gse118389/GRCh38_Ensembl_rmsk_TE.gtf',
+                               isGTFAnnotationFile = TRUE,
+                               GTF.attrType = "transcript_id", 
+                               ignoreDup = TRUE, 
+                               nthreads = 24,
+                               tmpDir = 'tmp/')
+	this.file.name <- paste0('featureCounts2a/', file.names[idx], 'featureCounts2a.rds') 
+	saveRDS(this.counts, file = this.file.name)
+}
