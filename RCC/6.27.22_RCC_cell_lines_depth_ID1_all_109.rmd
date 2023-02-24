@@ -1,0 +1,186 @@
+---
+title: "RCC Cell Lines + Kirc 8 Sample Depth, 111 Loci"
+author: "Kevin Feng"
+date: '2022-06-27'
+output:
+  html_document:
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Load in Data/Prepare it for Plotting
+```{r load, message=FALSE, warning=FALSE}
+library(dplyr)
+library(data.table)
+library(ggplot2)
+# read in loci
+loci <- fread('AG88_KIRC_genomic_loci.bed')
+names(loci) = c("Chrom", "Start", "End")
+ 
+# load other bed file 
+bed.111 <- fread('109_bed_file_with_gene.bed') %>% mutate(Start = Start-1) # adjust the start idxs
+bed.109 <- bed.111[3:111, ] # remove GAPDH and actin
+
+# read in cell line names and select only the relevant columns
+ccle.table <- fread('CCLE-celllines.txt') %>% select(contains("Characteristics[cell"), contains("Comment[ENA_RUN"))#select(c(5,31))
+names(ccle.table) = c("cell.line.names", "SRR.ID") 
+
+# read in all the files at once
+file.list = list.files(pattern = '*depth.txt') # order of files in data.list
+
+cov.list = lapply(file.list, function(fname){
+  df = fread(fname) 
+  names(df) = c("Chrom", "pos", "cov")
+  df = df %>% mutate(sample.ID = gsub(".depth.txt", "", fname))
+})
+cov.df = do.call(rbind, cov.list) # concatneates a list by row-binding
+cov.df = cov.df %>% left_join(ccle.table, by= c("sample.ID"="SRR.ID"))
+cov.df = cov.df %>% mutate(sample.type = ifelse(grepl("SRR", sample.ID), "cell.line", "TCGA"))
+cov.df = cov.df %>% mutate(cancer.status = ifelse(grepl("11A", sample.ID), "adj.normal", "tumor")) 
+cov.df = cov.df %>% mutate(sample = paste(sample.type, cancer.status, sep='-'))
+tcga.rows = which(cov.df$sample.type=='TCGA')
+cov.df$cell.line.names[tcga.rows] = cov.df$sample.ID[tcga.rows]
+
+# add 'chr' to chromosome numbers
+no.chr.rows = which(!grepl("chr", cov.df$Chrom))
+cov.df$Chrom[no.chr.rows] = paste0("chr", cov.df$Chrom[no.chr.rows])
+```
+
+
+## Granges
+```{r fix, message=FALSE, eval=FALSE}
+library(GenomicRanges)
+
+gr.109 = GRanges(seqnames = Rle(paste0("chr",bed.109$Chrom)), IRanges(start = bed.109$Start, end = bed.109$End))
+gr.109$locus = bed.109$FastaID
+cov.df.gr = GRanges(seqnames = Rle(cov.df$Chrom), IRanges(start=cov.df$pos, width = 1)) 
+loci = gr.109[subjectHits(findOverlaps(cov.df.gr, gr.109))]$locus
+```
+
+
+## Calculate Median Coverage over Locus
+Here we calculate the median coverage for each cell line for each locus. This way we can rank the cell lines by their coverage in each locus.
+```{r calc median, message=FALSE}
+# read in all the files at once
+file.list = list.files(pattern = '*depth.txt') # order of files in data.list
+data.list = lapply(file.list, function(x)fread(x))
+# fix col names and cell line chrom names
+for (i in 1:40){
+  names(data.list[[i]]) = c('Chrom', 'pos', 'cov')
+  if (i <= 32){
+    # add chr to chrom
+    data.list[[i]]$Chrom = paste0('chr', data.list[[i]]$Chrom)
+  }
+}
+
+# make sample list
+sample.list <- gsub("\\..*","",file.list)
+
+# sra to cell line name
+for (i in 1:32){
+  sample.list[i] <- ccle.table[ccle.table$SRR.ID == sample.list[i]]$cell.line.names[1]
+}
+# edit bed.111 fastid's
+bed.111$FastaID[1] = 'GAPDH'
+bed.111$FastaID[2] = 'ACTB'
+
+# init a dataframe
+median.cov.df <- data.frame(cell.line = sample.list)
+# iterate through the loci 
+for (loci.idx in 1:111){
+  # store loci info for each sample 
+  median.cov.list <- list()
+  # loci name
+  loci.name <- bed.111$FastaID[loci.idx]
+  for(file.idx in 1:40){
+    # subset for loci of interest for current sample
+    subset.loci <- data.list[[file.idx]] %>% filter((Chrom == paste0('chr', bed.111[loci.idx]$Chrom)),
+                                               (pos >= bed.111[loci.idx]$Start) &
+                                               (pos <= bed.111[loci.idx]$End))
+    # store info
+    median.cov.list <- c(median.cov.list, median(subset.loci$cov))
+  }
+  # add to our df
+  median.cov.df[[loci.name]] <- median.cov.list
+}
+rownames(median.cov.df) <- median.cov.df$cell.line
+# unlist
+median.cov.df <- as.data.frame(lapply(median.cov.df, unlist))
+
+```
+
+
+## Plot All Loci
+Here we plot the 111 loci. In the title we include locus #, width, ID1, and the top 5 cell lines.
+```{r plotAll, message=FALSE, warning=FALSE}
+# copy df but drop the 8 t/n samples
+median.cov.df.plot <- as.data.frame(median.cov.df[1:32,])
+
+
+for (loci.idx in 1:111){
+  # subset for entries that fall in our locus of interest
+  subset.loci <- cov.df %>% filter(Chrom == paste0('chr', bed.111[loci.idx]$Chrom),
+                                   (pos >= bed.111[loci.idx]$Start) & (pos <= bed.111[loci.idx]$End))
+  
+  # calc loci width
+  loci.width = (bed.111[loci.idx]$End-bed.111[loci.idx]$Start)+1
+  # set the title with all the information we want
+  # adding 1 to loci.idx accounts for cell.lines in the first column of median.cov.df.plot
+  plot.title <- paste0('Locus ', bed.111[loci.idx]$FastaID, ': ', loci.width, ' | ID1:', bed.111[loci.idx]$ID1,
+                       ' | Top CLs: ', median.cov.df.plot[order(-median.cov.df.plot[, (loci.idx+1)]),]$cell.line[1], ', ',
+                       median.cov.df.plot[order(-median.cov.df.plot[, (loci.idx+1)]),]$cell.line[2], ', ',
+                       median.cov.df.plot[order(-median.cov.df.plot[, (loci.idx+1)]),]$cell.line[3], ', ',
+                       median.cov.df.plot[order(-median.cov.df.plot[, (loci.idx+1)]),]$cell.line[4], ', ',
+                       median.cov.df.plot[order(-median.cov.df.plot[, (loci.idx+1)]),]$cell.line[5])
+  
+  # plot log10 y scale 
+  print(plot.title)
+  p <- ggplot(data=subset.loci, aes(x=pos, y=cov, group=sample.ID, color=sample)) +
+    geom_line() +
+    scale_color_manual(values=c('steelblue1', 'seagreen1', 'pink')) +
+    theme(plot.title = element_text(size = 8), legend.text=element_text(size=8)) +
+    ggtitle(plot.title) +
+    scale_y_continuous(trans = "log10")
+  print(p)
+}
+```
+
+
+## Median of medians
+Here we add a column to our median data frame. We will call this column median and it will be the median of medians across all loci for each cell line.
+```{r median of medians, message=FALSE}
+library(matrixStats)
+median.cov.df$median <- rowMedians(as.matrix(median.cov.df[4:length(median.cov.df)]), na.rm = TRUE)
+# subset for just cell.line and median columns
+cell.line.median.df <- median.cov.df %>% select(cell.line, median)
+# output in sorted order
+print(cell.line.median.df[order(cell.line.median.df$median, decreasing = TRUE),])
+# interactive table of the entire df
+DT::datatable(median.cov.df,
+          filter=list(position = 'top', plain = TRUE),
+          selection = 'single',
+          rownames = FALSE,
+          options = list(pageLength = 5,lengthMenu = c(5, 10, 20),
+                         autoWidth=TRUE))
+```
+
+
+
+## Different coloring method
+```{r plot w/ color diff, message=FALSE, eval=FALSE}
+for (loci.idx in 1:111){
+  subset.loci <- cov.df %>% filter(Chrom == paste0('chr', bed.111[loci.idx]$Chrom),
+                                   (pos >= bed.111[loci.idx]$Start) & (pos <= bed.111[loci.idx]$End))
+  p <- ggplot(data=subset.loci, aes(x=pos, y=cov, group=sample.ID, color=sample.ID)) +
+    geom_line() +
+    scale_color_manual(values=c(rep('black', 32), 'pink', 'plum', 'seagreen1', 'red', 'magenta', 'turquoise1', 'steelblue1' ,'steelblue4')) +
+    theme(plot.title = element_text(size = 10), legend.text=element_text(size=5)) 
+  print(p)
+}
+```
+
+
